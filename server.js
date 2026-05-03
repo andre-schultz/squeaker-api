@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import gamesRouter from './src/routes/games.js';
+import { startWarmupSchedule } from './src/services/warmup.js';
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -15,4 +16,7 @@ app.get('/', (req, res) => res.json({ status: 'ok', service: 'Squeaker API' }));
 // Routes
 app.use('/api/games', gamesRouter);
 
-app.listen(PORT, () => console.log(`Squeaker API running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Squeaker API running on port ${PORT}`);
+  startWarmupSchedule();
+});
