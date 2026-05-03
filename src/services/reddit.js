@@ -1,5 +1,5 @@
 import fetch from 'node-fetch';
-import { EXCITEMENT_WORDS, BORING_WORDS } from '../config.js';
+import { SPORTS, EXCITEMENT_WORDS, BORING_WORDS } from '../config.js';
 import { calcBuzz } from './algorithm.js';
 
 const HEADERS = { 'User-Agent': 'Squeaker/1.0 (squeaker.app)' };
@@ -122,7 +122,6 @@ function scoreSentiment(comments) {
 
 // Match subreddit back to sport config for buzz normalization
 function findSportCfg(subreddit) {
-  const { SPORTS } = await import('../config.js').catch(() => ({ SPORTS: {} }));
   return Object.values(SPORTS).find(s => s.sub === subreddit) || {
     base: { comments: 1000, upvotes: 200, velocity: 200 }
   };
