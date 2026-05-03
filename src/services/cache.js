@@ -2,8 +2,8 @@ import { Redis } from '@upstash/redis';
 
 // Upstash Redis client — credentials from environment variables
 const redis = new Redis({
-  url:   process.env.UPSTASH_REDIS_URL,
-  token: process.env.UPSTASH_REDIS_TOKEN,
+  url:   process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
 export async function getCache(key) {
