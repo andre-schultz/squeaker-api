@@ -7,6 +7,8 @@ const HEADERS = { 'User-Agent': 'Squeaker/1.0 (squeaker.app)' };
 // Main entry — fetch buzz for a game, combining game thread + post-game thread
 export async function fetchGameBuzz(game) {
   const { subreddit, live } = game;
+
+  // Build team identifiers for matching Reddit thread titles
   const homeName = game.home.name.split(' ').pop().toLowerCase();
   const awayName = game.away.name.split(' ').pop().toLowerCase();
   const homeAbbr = game.home.abbr.toLowerCase();
@@ -17,31 +19,39 @@ export async function fetchGameBuzz(game) {
     `${awayName} ${homeName}`,
   ];
 
+  // Checks if a thread title mentions either team
   const matchesTeam = (title) =>
     title.includes(homeName) || title.includes(awayName) ||
     title.includes(homeAbbr) || title.includes(awayAbbr);
-    findThread(subreddit, searchTerms, ['game thread']),
-    findThread(subreddit, searchTerms, ['post match', 'post-match', 'postgame', 'post game', 'final score']),
+
+  // Find both game thread and post-game thread in parallel
+  const [gameThread, postThread] = await Promise.all([
+    findThread(subreddit, searchTerms, ['game thread'], matchesTeam),
+    findThread(subreddit, searchTerms, ['post match', 'post-match', 'postgame', 'post game', 'final score'], matchesTeam),
   ]);
 
   if (!gameThread && !postThread) return null;
 
   // Fetch comments from whichever threads we found
   const [gameComments, postComments] = await Promise.all([
-    gameThread  ? fetchComments(gameThread.permalink)  : Promise.resolve([]),
-    postThread  ? fetchComments(postThread.permalink)  : Promise.resolve([]),
+    gameThread ? fetchComments(gameThread.permalink)  : Promise.resolve([]),
+    postThread ? fetchComments(postThread.permalink)  : Promise.resolve([]),
   ]);
 
-  // Combine all comments, dedupe
+  // Combine all comments
   const allComments = [...gameComments, ...postComments];
   const sentiment   = scoreSentiment(allComments);
 
-  // Velocity from game thread (meaningful for live, less so after)
-  const now     = Date.now() / 1000;
-  const primary = gameThread || postThread;
-  const hrs     = Math.max(0.25, (now - primary.created_utc) / 3600);
+  // Velocity from primary thread
+  const now           = Date.now() / 1000;
+  const primary       = gameThread || postThread;
+  const hrs           = Math.max(0.25, (now - primary.created_utc) / 3600);
   const totalComments = (gameThread?.num_comments || 0) + (postThread?.num_comments || 0);
   const velocity      = Math.round(totalComments / hrs);
+
+  // Find sport config for buzz normalization
+  const sportCfg = Object.values(SPORTS).find(s => s.sub === subreddit) ||
+    { base: { comments: 1000, upvotes: 200, velocity: 200 } };
 
   const buzz = calcBuzz({
     comments:  totalComments,
@@ -49,7 +59,7 @@ export async function fetchGameBuzz(game) {
     velocity,
     sentiment,
     isLive:    live,
-  }, findSportCfg(subreddit));
+  }, sportCfg);
 
   return {
     buzz,
@@ -64,7 +74,7 @@ export async function fetchGameBuzz(game) {
   };
 }
 
-// Find a Reddit thread matching type keywords
+// Find a Reddit thread matching type keywords and team name
 async function findThread(subreddit, searchTerms, typeKeywords, matchesTeam) {
   for (const term of searchTerms) {
     try {
@@ -75,7 +85,7 @@ async function findThread(subreddit, searchTerms, typeKeywords, matchesTeam) {
       const data  = await res.json();
 
       const match = (data.data?.children || []).find(p => {
-        const title = p.data.title.toLowerCase();
+        const title  = p.data.title.toLowerCase();
         const hasType = typeKeywords.some(kw => title.includes(kw));
         return hasType && matchesTeam(title);
       });
@@ -115,11 +125,4 @@ function scoreSentiment(comments) {
   const total = excited + boring;
   if (total === 0) return 50;
   return Math.round((excited / total) * 100);
-}
-
-// Match subreddit back to sport config for buzz normalization
-function findSportCfg(subreddit) {
-  return Object.values(SPORTS).find(s => s.sub === subreddit) || {
-    base: { comments: 1000, upvotes: 200, velocity: 200 }
-  };
 }
