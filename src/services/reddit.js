@@ -6,15 +6,20 @@ const HEADERS = { 'User-Agent': 'Squeaker/1.0 (squeaker.app)' };
 
 // Main entry — fetch buzz for a game, combining game thread + post-game thread
 export async function fetchGameBuzz(game) {
-  const { subreddit, home, away, live } = game;
+  const { subreddit, live } = game;
+  const homeName = game.home.name.split(' ').pop().toLowerCase();
+  const awayName = game.away.name.split(' ').pop().toLowerCase();
+  const homeAbbr = game.home.abbr.toLowerCase();
+  const awayAbbr = game.away.abbr.toLowerCase();
 
   const searchTerms = [
-    `${away.abbr} ${home.abbr}`,
-    `${away.name.split(' ').pop()} ${home.name.split(' ').pop()}`,
+    `${game.away.abbr} ${game.home.abbr}`,
+    `${awayName} ${homeName}`,
   ];
 
-  // Find both game thread and post-game thread
-  const [gameThread, postThread] = await Promise.all([
+  const matchesTeam = (title) =>
+    title.includes(homeName) || title.includes(awayName) ||
+    title.includes(homeAbbr) || title.includes(awayAbbr);
     findThread(subreddit, searchTerms, ['game thread']),
     findThread(subreddit, searchTerms, ['post match', 'post-match', 'postgame', 'post game', 'final score']),
   ]);
@@ -60,7 +65,7 @@ export async function fetchGameBuzz(game) {
 }
 
 // Find a Reddit thread matching type keywords
-async function findThread(subreddit, searchTerms, typeKeywords) {
+async function findThread(subreddit, searchTerms, typeKeywords, matchesTeam) {
   for (const term of searchTerms) {
     try {
       const query = `${typeKeywords[0]} ${term}`;
@@ -72,11 +77,7 @@ async function findThread(subreddit, searchTerms, typeKeywords) {
       const match = (data.data?.children || []).find(p => {
         const title = p.data.title.toLowerCase();
         const hasType = typeKeywords.some(kw => title.includes(kw));
-        const hasTeam = (
-          title.includes(home(term)) ||
-          title.includes(away(term))
-        );
-        return hasType && hasTeam;
+        return hasType && matchesTeam(title);
       });
 
       if (match) return match.data;
@@ -86,10 +87,6 @@ async function findThread(subreddit, searchTerms, typeKeywords) {
   }
   return null;
 }
-
-// Helper to extract team name from search term
-function home(term) { return term.split(' ')[1]?.toLowerCase() || ''; }
-function away(term) { return term.split(' ')[0]?.toLowerCase() || ''; }
 
 // Fetch top comments from a thread
 async function fetchComments(permalink) {
