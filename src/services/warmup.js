@@ -3,8 +3,16 @@ import { fetchGameBuzz } from './reddit.js';
 import { setCache } from './cache.js';
 import { CACHE_TTL } from '../config.js';
 
-const GAME_REFRESH_MS = 10 * 60 * 1000;  // 10 min — scores
-const BUZZ_REFRESH_MS = 15 * 60 * 1000;  // 15 min — buzz
+const GAME_REFRESH_MS  = 10 * 60 * 1000;  // 10 min — active hours
+const BUZZ_REFRESH_MS  = 15 * 60 * 1000;  // 15 min — active hours
+const OFF_REFRESH_MS   = 60 * 60 * 1000;  // 60 min — off hours
+
+// Off hours = 2am to 9am ET
+function isOffHours() {
+  const etHour = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false });
+  const hour = parseInt(etHour);
+  return hour >= 2 && hour < 9;
+}
 
 // Run on server start and on a schedule
 export async function warmCache() {
@@ -43,40 +51,52 @@ export function startWarmupSchedule() {
   // Warm immediately on start
   warmCache();
 
-  // Then refresh games every 10 min
-  setInterval(async () => {
-    try {
-      const games = await fetchAllGames();
-      const hasLive = games.some(g => g.live);
-      const ttl = hasLive ? CACHE_TTL.liveGames : CACHE_TTL.finishedGames;
-      await setCache('games:all', games, ttl);
-      console.log(`[schedule] Games refreshed (${games.length} games)`);
-    } catch (e) {
-      console.error('[schedule] Game refresh failed:', e.message);
-    }
-  }, GAME_REFRESH_MS);
-
-  // Refresh buzz every 15 min
-  setInterval(async () => {
-    try {
-      const games = await fetchAllGames();
-      for (const game of games) {
-        try {
-          const buzz = await fetchGameBuzz(game);
-          if (buzz) {
-            const ttl = game.live ? CACHE_TTL.buzzLive : CACHE_TTL.buzzFinished;
-            await setCache(`buzz:${game.id}`, buzz, ttl);
-          }
-          await sleep(500);
-        } catch (e) {
-          console.error(`[schedule] Buzz refresh failed for ${game.id}:`, e.message);
-        }
+  // Self-scheduling game refresh — checks off hours each cycle
+  async function scheduleGameRefresh() {
+    const delay = isOffHours() ? OFF_REFRESH_MS : GAME_REFRESH_MS;
+    setTimeout(async () => {
+      try {
+        const games  = await fetchAllGames();
+        const hasLive = games.some(g => g.live);
+        const ttl    = hasLive ? CACHE_TTL.liveGames : CACHE_TTL.finishedGames;
+        await setCache('games:all', games, ttl);
+        console.log(`[schedule] Games refreshed (${games.length} games) — next in ${delay/60000} min`);
+      } catch (e) {
+        console.error('[schedule] Game refresh failed:', e.message);
       }
-      console.log('[schedule] Buzz refresh complete');
-    } catch (e) {
-      console.error('[schedule] Buzz refresh failed:', e.message);
-    }
-  }, BUZZ_REFRESH_MS);
+      scheduleGameRefresh(); // schedule next cycle
+    }, delay);
+  }
+
+  // Self-scheduling buzz refresh — checks off hours each cycle
+  async function scheduleBuzzRefresh() {
+    const delay = isOffHours() ? OFF_REFRESH_MS : BUZZ_REFRESH_MS;
+    setTimeout(async () => {
+      try {
+        const games = await fetchAllGames();
+        for (const game of games) {
+          try {
+            const buzz = await fetchGameBuzz(game);
+            if (buzz) {
+              const ttl = game.live ? CACHE_TTL.buzzLive : CACHE_TTL.buzzFinished;
+              await setCache(`buzz:${game.id}`, buzz, ttl);
+            }
+            await sleep(500);
+          } catch (e) {
+            console.error(`[schedule] Buzz refresh failed for ${game.id}:`, e.message);
+          }
+        }
+        console.log(`[schedule] Buzz refresh complete — next in ${delay/60000} min`);
+      } catch (e) {
+        console.error('[schedule] Buzz refresh failed:', e.message);
+      }
+      scheduleBuzzRefresh(); // schedule next cycle
+    }, delay);
+  }
+
+  scheduleGameRefresh();
+  scheduleBuzzRefresh();
+}
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));

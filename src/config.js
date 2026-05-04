@@ -49,6 +49,20 @@ export const SPORTS = {
     margins: { great: 1, good: 2, ok: 3, blowout: 4 },
     base: { comments: 300, upvotes: 80, velocity: 60 },
   },
+  epl: {
+    name: 'EPL', emoji: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    espnSport: 'soccer', espnLeague: 'eng.1',
+    sub: 'soccer',
+    margins: { great: 1, good: 2, ok: 3, blowout: 4 },
+    base: { comments: 1500, upvotes: 400, velocity: 300 },
+  },
+  ucl: {
+    name: 'Champions League', emoji: '⭐',
+    espnSport: 'soccer', espnLeague: 'uefa.champions',
+    sub: 'soccer',
+    margins: { great: 1, good: 2, ok: 3, blowout: 4 },
+    base: { comments: 2000, upvotes: 500, velocity: 400 },
+  },
 };
 
 // ── Excitement language ───────────────────────────────────────────────────────
