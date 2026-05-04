@@ -1,17 +1,52 @@
 import { fetchAllGames } from './espn.js';
 import { fetchGameBuzz } from './reddit.js';
-import { setCache } from './cache.js';
+import { setCache, getCache } from './cache.js';
 import { CACHE_TTL } from '../config.js';
 
-const GAME_REFRESH_MS  = 10 * 60 * 1000;  // 10 min — active hours
-const BUZZ_REFRESH_MS  = 15 * 60 * 1000;  // 15 min — active hours
-const OFF_REFRESH_MS   = 60 * 60 * 1000;  // 60 min — off hours
+const GAME_REFRESH_MS  = 10 * 60 * 1000;
+const BUZZ_REFRESH_MS  = 15 * 60 * 1000;
+const OFF_REFRESH_MS   = 60 * 60 * 1000;
+const HISTORY_TTL      = 30 * 24 * 60 * 60; // 30 days in seconds
 
-// Off hours = 2am to 9am ET
 function isOffHours() {
   const etHour = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false });
-  const hour = parseInt(etHour);
-  return hour >= 2 && hour < 9;
+  return parseInt(etHour) >= 2 && parseInt(etHour) < 9;
+}
+
+// Save a completed game snapshot for algorithm training
+async function saveToHistory(game, buzz) {
+  if (!game.done) return; // only save finished games
+  const date    = new Date(game.date).toISOString().slice(0, 10);
+  const key     = `history:${date}:${game.id}`;
+
+  // Don't overwrite if already saved
+  const existing = await getCache(key);
+  if (existing) return;
+
+  const snapshot = {
+    id:            game.id,
+    date:          game.date,
+    sport:         game.sport,
+    sportName:     game.sportName,
+    homeTeam:      game.home.name,
+    awayTeam:      game.away.name,
+    homeScore:     game.home.score,
+    awayScore:     game.away.score,
+    margin:        game.margin,
+    isOT:          game.isOT,
+    isComeback:    game.isComeback,
+    excitementScore: game.excitement,
+    excitementDesc:  game.desc,
+    buzzScore:     buzz?.buzz     ?? null,
+    buzzSentiment: buzz?.sentiment ?? null,
+    buzzComments:  buzz?.comments  ?? null,
+    buzzVelocity:  buzz?.velocity  ?? null,
+    redditThread:  buzz?.threadUrl ?? null,
+    savedAt:       new Date().toISOString(),
+  };
+
+  await setCache(key, snapshot, HISTORY_TTL);
+  console.log(`[history] Saved ${game.away.abbr} vs ${game.home.abbr} (${date})`);
 }
 
 // Run on server start and on a schedule
@@ -34,7 +69,8 @@ export async function warmCache() {
           await setCache(`buzz:${game.id}`, buzz, buzzTTL);
           console.log(`[warmup] Buzz cached for ${game.away.abbr} vs ${game.home.abbr}`);
         }
-        // Small delay between Reddit calls to be a good citizen
+        // Save finished games to history for algorithm training
+        await saveToHistory(game, buzz);
         await sleep(500);
       } catch (e) {
         console.error(`[warmup] Buzz failed for game ${game.id}:`, e.message);
@@ -81,6 +117,8 @@ export function startWarmupSchedule() {
               const ttl = game.live ? CACHE_TTL.buzzLive : CACHE_TTL.buzzFinished;
               await setCache(`buzz:${game.id}`, buzz, ttl);
             }
+            // Save finished games to history for algorithm training
+            await saveToHistory(game, buzz);
             await sleep(500);
           } catch (e) {
             console.error(`[schedule] Buzz refresh failed for ${game.id}:`, e.message);
