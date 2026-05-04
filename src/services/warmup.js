@@ -3,9 +3,9 @@ import { fetchGameBuzz } from './reddit.js';
 import { setCache, getCache } from './cache.js';
 import { CACHE_TTL } from '../config.js';
 
-const GAME_REFRESH_MS = 10 * 60 * 1000;  // 10 min — active hours
-const BUZZ_REFRESH_MS = 15 * 60 * 1000;  // 15 min — active hours
-const OFF_REFRESH_MS  = 60 * 60 * 1000;  // 60 min — off hours
+const GAME_REFRESH_MS = 3  * 60 * 1000;  // 3 min — active hours
+const BUZZ_REFRESH_MS = 10 * 60 * 1000;  // 10 min — active hours
+const OFF_REFRESH_MS  = 10 * 60 * 1000;  // 10 min — off hours
 const HISTORY_TTL     = 30 * 24 * 60 * 60; // 30 days in seconds
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -41,8 +41,10 @@ async function saveToHistory(game, buzz) {
     margin:          game.margin,
     isOT:            game.isOT,
     isComeback:      game.isComeback,
-    excitementScore: game.excitement,
-    excitementDesc:  game.desc,
+    excitementScore:   game.excitement,
+    excitementDesc:    game.desc,
+    momentumBonus:     game.momentumBonus   ?? 0,
+    momentumSignals:   game.momentumSignals ?? [],
     buzzScore:       buzz?.buzz      ?? null,
     buzzSentiment:   buzz?.sentiment ?? null,
     buzzComments:    buzz?.comments  ?? null,

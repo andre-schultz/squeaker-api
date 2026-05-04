@@ -1,6 +1,7 @@
 import fetch from 'node-fetch';
 import { SPORTS, HOURS_WINDOW } from '../config.js';
 import { calcExcitement, detectComeback, excitementDesc } from './algorithm.js';
+import { recordSnapshot, getTimeline, analyzeMomentum } from './timeline.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 
@@ -30,7 +31,7 @@ async function fetchSport(key, cfg, dates) {
       const data = await res.json();
 
       for (const ev of (data.events || [])) {
-        const game = parseEvent(ev, key, cfg);
+        const game = await parseEvent(ev, key, cfg); // now async
         if (game) games.push(game);
       }
     } catch (e) {
@@ -40,7 +41,7 @@ async function fetchSport(key, cfg, dates) {
   return games;
 }
 
-function parseEvent(ev, sportKey, cfg) {
+async function parseEvent(ev, sportKey, cfg) {
   const co = ev.competitions?.[0];
   if (!co) return null;
 
@@ -79,7 +80,21 @@ function parseEvent(ev, sportKey, cfg) {
     : null;
 
   const isComeback = done ? detectComeback(halfHome, halfAway, margin, cfg) : false;
-  const excitement = calcExcitement(margin, isOT, isComeback, cfg);
+
+  // Build partial game object for snapshot recording
+  const partialGame = {
+    id: ev.id, sport: sportKey,
+    home: { score: homeScore }, away: { score: awayScore },
+    live, done,
+  };
+
+  // Record score snapshot for momentum tracking (live and finished games)
+  const timeline = await recordSnapshot(partialGame);
+
+  // Analyze momentum from full scoring timeline
+  const { momentumBonus, signals } = analyzeMomentum(timeline, { sport: sportKey });
+
+  const excitement = calcExcitement(margin, isOT, isComeback, cfg, momentumBonus);
 
   const mkTeam = (T, score, winner) => ({
     name:     T.team.shortDisplayName || T.team.displayName,
@@ -101,6 +116,8 @@ function parseEvent(ev, sportKey, cfg) {
     margin,
     isOT,
     isComeback,
+    momentumBonus,
+    momentumSignals: signals,
     done,
     live,
     excitement,

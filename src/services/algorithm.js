@@ -1,12 +1,13 @@
 // ── Excitement Score (0-100) ──────────────────────────────────────────────────
-// Closeness: 0-90 pts  (dominant factor)
-// Comeback:   +10 pts  (margin narrowed significantly from half to final)
-// OT:         +10 pts  (went to overtime / extra time)
+// Closeness:        0-90 pts  (dominant factor)
+// Comeback:          +10 pts
+// OT:                +10 pts
+// Momentum bonus:    +20 pts  (late goals, lead changes, time spent close)
 // Capped at 100
 
-export function calcExcitement(margin, isOT, isComeback, sport) {
+export function calcExcitement(margin, isOT, isComeback, sport, momentumBonus = 0) {
   const cls = closenessScore(margin, sport.margins);
-  const raw = cls + (isComeback ? 10 : 0) + (isOT ? 10 : 0);
+  const raw = cls + (isComeback ? 10 : 0) + (isOT ? 10 : 0) + momentumBonus;
   return Math.min(100, raw);
 }
 
