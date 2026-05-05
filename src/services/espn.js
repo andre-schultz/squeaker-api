@@ -64,9 +64,16 @@ async function parseEvent(ev, sportKey, cfg) {
   const awayScore = parseFloat(away.score) || 0;
   const margin    = Math.abs(homeScore - awayScore);
 
-  const detail = (status?.shortDetail || '').toLowerCase();
-  const isOT   = detail.includes('ot') || detail.includes('overtime') ||
-                 (sportKey === 'mlb' && /\/1\d/.test(detail));
+  const detail    = (status?.shortDetail || '').toLowerCase();
+  const rawDetail = status?.shortDetail || '';
+  const isOT   = detail.includes('ot') ||
+                 detail.includes('overtime') ||
+                 detail.includes('extra time') ||
+                 detail.includes('penalties') ||
+                 (sportKey === 'mlb' && /f\/1[0-9]/.test(detail));
+
+  // Game progress (0.0–1.0) — used to weight live excitement scores
+  const progress = estimateProgress(sportKey, detail, comps); // F/10, F/11 etc
 
   // Extract halftime scores for comeback detection
   const homeLines  = home.linescores || [];
@@ -80,6 +87,7 @@ async function parseEvent(ev, sportKey, cfg) {
     : null;
 
   const isComeback = done ? detectComeback(halfHome, halfAway, margin, cfg) : false;
+  const excitement = calcExcitement(margin, isOT, isComeback, cfg, momentumBonus, live ? progress : 1.0);
 
   // Build partial game object for snapshot recording
   const partialGame = {
@@ -118,6 +126,8 @@ async function parseEvent(ev, sportKey, cfg) {
     isComeback,
     momentumBonus,
     momentumSignals: signals,
+    progress,
+    gameStage: rawDetail,
     done,
     live,
     excitement,

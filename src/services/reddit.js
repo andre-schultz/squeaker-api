@@ -14,21 +14,30 @@ export async function fetchGameBuzz(game) {
   const homeAbbr = game.home.abbr.toLowerCase();
   const awayAbbr = game.away.abbr.toLowerCase();
 
+  // For soccer subreddits (r/soccer), also try full team names
+  const homeFull = game.home.name.toLowerCase();
+  const awayFull = game.away.name.toLowerCase();
+
   const searchTerms = [
     `${game.away.abbr} ${game.home.abbr}`,
     `${awayName} ${homeName}`,
+    `${awayFull} ${homeFull}`,
   ];
 
   // Checks if a thread title mentions either team
   const matchesTeam = (title) =>
-    title.includes(homeName) || title.includes(awayName) ||
-    title.includes(homeAbbr) || title.includes(awayAbbr);
+    title.includes(homeName)  || title.includes(awayName)  ||
+    title.includes(homeAbbr)  || title.includes(awayAbbr)  ||
+    title.includes(homeFull)  || title.includes(awayFull);
 
-  // Find both game thread and post-game thread in parallel
-  const [gameThread, postThread] = await Promise.all([
-    findThread(subreddit, searchTerms, ['game thread'], matchesTeam),
-    findThread(subreddit, searchTerms, ['post match', 'post-match', 'postgame', 'post game', 'final score'], matchesTeam),
-  ]);
+  // Thread type keywords — soccer uses "match thread" not "game thread"
+  const isSoccer = ['mls', 'epl', 'ucl'].includes(game.sport);
+  const gameThreadKws = isSoccer
+    ? ['match thread', 'game thread']
+    : ['game thread'];
+  const postGameKws = isSoccer
+    ? ['post match', 'post-match', 'match thread post']
+    : ['post match', 'post-match', 'postgame', 'post game', 'final score'];
 
   if (!gameThread && !postThread) return null;
 

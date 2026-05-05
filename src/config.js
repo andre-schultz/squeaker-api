@@ -104,4 +104,4 @@ export const CACHE_TTL = {
 };
 
 // ── Time window ───────────────────────────────────────────────────────────────
-export const HOURS_WINDOW = 36; // show games from last 36 hours
+export const HOURS_WINDOW = 120; // show games from last 5 days

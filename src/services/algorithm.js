@@ -5,10 +5,22 @@
 // Momentum bonus:    +20 pts  (late goals, lead changes, time spent close)
 // Capped at 100
 
-export function calcExcitement(margin, isOT, isComeback, sport, momentumBonus = 0) {
+export function calcExcitement(margin, isOT, isComeback, sport, momentumBonus = 0, progress = 1.0) {
   const cls = closenessScore(margin, sport.margins);
-  const raw = cls + (isComeback ? 10 : 0) + (isOT ? 10 : 0) + momentumBonus;
-  return Math.min(100, raw);
+  const otBonus       = isOT       ? Math.min(10, 100 - cls) : 0;
+  const comebackBonus = isComeback ? Math.min(10, 100 - cls - otBonus) : 0;
+  const momBonus      = Math.min(momentumBonus, 100 - cls - otBonus - comebackBonus);
+  const raw           = cls + otBonus + comebackBonus + momBonus;
+
+  // For live games, scale score by how far through the game we are.
+  // A 0-0 tie in the 1st inning scores much lower than 0-0 in the 9th.
+  // We blend: early game gets 30% raw + 70% progress-weighted.
+  // By the final 20% of the game, the full raw score applies.
+  const progressMultiplier = progress < 0.8
+    ? 0.3 + (progress / 0.8) * 0.7   // ramps from 0.3→1.0 over first 80%
+    : 1.0;                             // last 20% = full score
+
+  return Math.min(99, Math.round(raw * progressMultiplier));
 }
 
 function closenessScore(margin, m) {
