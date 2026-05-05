@@ -28,7 +28,13 @@ export async function fetchGameBuzz(game) {
   const query    = `${typeKw} ${awayLast} ${homeLast}`;
 
   await sleep(DELAY);
-  const thread = await findThread(subreddit, query, typeKw, matchesTeam, game.date);
+    // Game window: thread must be created within 1 hour before
+    // game start and up to 5 hours after (covers long games/OT)
+    const gameTs = game.date ? new Date(game.date).getTime() / 1000 : null;
+    const windowStart = gameTs ? gameTs - 3600  : null;  // 1 hour before
+    const windowEnd   = gameTs ? gameTs + 18000 : null;  // 5 hours after
+
+    const thread = await findThread(subreddit, query, typeKw, matchesTeam, windowStart, windowEnd);
   if (!thread) return null;
 
   const comments  = await fetchComments(thread.permalink);
@@ -58,7 +64,7 @@ export async function fetchGameBuzz(game) {
   };
 }
 
-async function findThread(subreddit, query, typeKw, matchesTeam, gameDate) {
+async function findThread(subreddit, query, typeKw, matchesTeam, windowStart, windowEnd) {
   try {
     const url = `https://www.reddit.com/r/${subreddit}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=new&limit=10&t=week`;
     const res = await fetch(url, { headers: HEADERS });
@@ -74,29 +80,23 @@ async function findThread(subreddit, query, typeKw, matchesTeam, gameDate) {
     const posts = data.data?.children || [];
     console.log(`[reddit] "${query}" → ${posts.length} results`);
 
-    // Game window: thread must be created within 1 hour before
-    // game start and up to 5 hours after (covers long games/OT)
-    const gameStart  = new Date(gameDate).getTime() / 1000;
-    const windowStart = gameStart - 3600;      // 1 hour before tipoff
-    const windowEnd   = gameStart + 18000;     // 5 hours after tipoff
-
     const match = posts.find(p => {
       const title   = p.data.title.toLowerCase();
       const created = p.data.created_utc;
-      const inWindow = created >= windowStart && created <= windowEnd;
-      const hasType  = title.includes(typeKw);
-      const hasTeam  = matchesTeam(title);
-      return inWindow && hasType && hasTeam;
+      // If we have a valid time window, use it; otherwise fall back to name matching only
+      const inWindow = (windowStart && windowEnd)
+        ? created >= windowStart && created <= windowEnd
+        : true;
+      return inWindow && title.includes(typeKw) && matchesTeam(title);
     });
 
     if (match) {
       console.log(`[reddit] ✓ ${match.data.title}`);
     } else {
-      // Log why we didn't match — useful for debugging
-      const timeMatches = posts.filter(p =>
-        p.data.created_utc >= windowStart && p.data.created_utc <= windowEnd
-      );
-      console.log(`[reddit] ✗ No match (${timeMatches.length}/${posts.length} in time window)`);
+      const timeMatches = windowStart
+        ? posts.filter(p => p.data.created_utc >= windowStart && p.data.created_utc <= windowEnd).length
+        : posts.length;
+      console.log(`[reddit] ✗ No match (${timeMatches}/${posts.length} in time window)`);
     }
 
     return match?.data || null;
