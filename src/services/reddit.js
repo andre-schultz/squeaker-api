@@ -21,9 +21,11 @@ export async function fetchGameBuzz(game) {
     (title.includes(homeLast) || title.includes(homeAbbr) || title.includes(homeFull)) &&
     (title.includes(awayLast) || title.includes(awayAbbr) || title.includes(awayFull));
 
+  // Use short names for the search query (better Reddit search results)
+  // but match against all name variants for accuracy
   const isSoccer = ['mls', 'epl', 'ucl'].includes(game.sport);
   const typeKw   = isSoccer ? 'match thread' : 'game thread';
-  const query    = `${typeKw} ${awayFull} ${homeFull}`;
+  const query    = `${typeKw} ${awayLast} ${homeLast}`;
 
   await sleep(DELAY);
   const thread = await findThread(subreddit, query, typeKw, matchesTeam);
