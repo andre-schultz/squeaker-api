@@ -99,8 +99,8 @@ export const BORING_WORDS = [
 export const CACHE_TTL = {
   liveGames:     180,    // 3 min — live games
   finishedGames: 600,    // 10 min — finished games
-  buzzLive:      86400,  // 24 hours — never disappear, overwritten when fresh
-  buzzFinished:  86400,  // 24 hours — never disappear, overwritten when fresh
+  buzzLive:      432000, // 5 days — matches game window, never disappears mid-session
+  buzzFinished:  432000, // 5 days — same
 };
 
 // ── Time window ───────────────────────────────────────────────────────────────

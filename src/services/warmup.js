@@ -4,9 +4,10 @@ import { setCache, getCache } from './cache.js';
 import { CACHE_TTL } from '../config.js';
 
 const GAME_REFRESH_MS = 3  * 60 * 1000;  // 3 min — active hours
-const BUZZ_REFRESH_MS = 10 * 60 * 1000;  // 10 min — active hours
+const BUZZ_REFRESH_MS = 10 * 60 * 1000;  // 10 min — fits within ~90s completion time
 const OFF_REFRESH_MS  = 10 * 60 * 1000;  // 10 min — off hours
-const HISTORY_TTL     = 30 * 24 * 60 * 60; // 30 days in seconds
+const HISTORY_TTL     = 30 * 24 * 60 * 60;
+const DELAY           = 3000; // 3s between Reddit calls
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -71,7 +72,7 @@ export async function warmCache() {
     // 2. Fetch buzz only for recent, exciting games to avoid Reddit rate limits
     const buzzCandidates = games.filter(g => {
       const ageHours = (Date.now() - new Date(g.date).getTime()) / 3600000;
-      return ageHours <= 36 && g.excitement >= 30;
+      return ageHours <= 36;
     });
     console.log(`[warmup] Fetching buzz for ${buzzCandidates.length}/${games.length} games`);
 
@@ -84,7 +85,7 @@ export async function warmCache() {
           console.log(`[warmup] Buzz cached for ${game.away.abbr} vs ${game.home.abbr}`);
         }
         await saveToHistory(game, buzz);
-        await sleep(500);
+        await sleep(DELAY);
       } catch (e) {
         console.error(`[warmup] Buzz failed for game ${game.id}:`, e.message);
       }
@@ -120,7 +121,7 @@ async function scheduleBuzzRefresh() {
       const games = await fetchAllGames();
       const buzzCandidates = games.filter(g => {
         const ageHours = (Date.now() - new Date(g.date).getTime()) / 3600000;
-        return ageHours <= 36 && g.excitement >= 30;
+        return ageHours <= 36;
       });
       for (const game of buzzCandidates) {
         try {
