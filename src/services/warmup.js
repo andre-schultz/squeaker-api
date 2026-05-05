@@ -68,8 +68,14 @@ export async function warmCache() {
     await setCache('games:all', games, gameTTL);
     console.log(`[warmup] Cached ${games.length} games (TTL: ${gameTTL}s)`);
 
-    // 2. Fetch buzz for each game sequentially to respect Reddit rate limits
-    for (const game of games) {
+    // 2. Fetch buzz only for recent, exciting games to avoid Reddit rate limits
+    const buzzCandidates = games.filter(g => {
+      const ageHours = (Date.now() - new Date(g.date).getTime()) / 3600000;
+      return ageHours <= 36 && g.excitement >= 30;
+    });
+    console.log(`[warmup] Fetching buzz for ${buzzCandidates.length}/${games.length} games`);
+
+    for (const game of buzzCandidates) {
       try {
         const buzz = await fetchGameBuzz(game);
         if (buzz) {
@@ -112,7 +118,11 @@ async function scheduleBuzzRefresh() {
   setTimeout(async () => {
     try {
       const games = await fetchAllGames();
-      for (const game of games) {
+      const buzzCandidates = games.filter(g => {
+        const ageHours = (Date.now() - new Date(g.date).getTime()) / 3600000;
+        return ageHours <= 36 && g.excitement >= 30;
+      });
+      for (const game of buzzCandidates) {
         try {
           const buzz = await fetchGameBuzz(game);
           if (buzz) {
