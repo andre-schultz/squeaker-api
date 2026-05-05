@@ -97,10 +97,10 @@ export const BORING_WORDS = [
 
 // ── Cache TTLs (seconds) ──────────────────────────────────────────────────────
 export const CACHE_TTL = {
-  liveGames:     60,     // 1 min  — refresh often when games are live
-  finishedGames: 600,    // 10 min — scores don't change
-  buzzLive:      90,     // 1.5 min — velocity matters, refresh often
-  buzzFinished:  900,    // 15 min — sentiment stable after game
+  liveGames:     180,   // 3 min — live games
+  finishedGames: 600,   // 10 min — finished games
+  buzzLive:      180,   // 3 min
+  buzzFinished:  900,   // 15 min
 };
 
 // ── Time window ───────────────────────────────────────────────────────────────

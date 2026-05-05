@@ -1,15 +1,24 @@
 import express from 'express';
-import { getCache } from '../services/cache.js';
+import { fetchAllGames } from '../services/espn.js';
+import { getCache, setCache } from '../services/cache.js';
+import { CACHE_TTL } from '../config.js';
 
 const router = express.Router();
 
-// GET /api/games — always served from cache (pre-warmed on server start)
+// GET /api/games
+// Always served from cache. Falls back to live fetch if cache is empty.
 router.get('/', async (req, res) => {
   try {
-    const games = await getCache('games:all');
-    if (games) return res.json(games);
-    // Cache miss (e.g. server just started) — return empty, warmup will fill it
-    res.json([]);
+    const cached = await getCache('games:all');
+    if (cached && cached.length > 0) return res.json(cached);
+
+    // Cache miss — fetch live and cache immediately
+    console.log('[routes] Cache miss — fetching games live');
+    const games   = await fetchAllGames();
+    const hasLive = games.some(g => g.live);
+    const ttl     = hasLive ? CACHE_TTL.liveGames : CACHE_TTL.finishedGames;
+    if (games.length > 0) await setCache('games:all', games, ttl);
+    res.json(games);
   } catch (e) {
     console.error('GET /api/games error:', e.message);
     res.status(500).json({ error: 'Failed to fetch games' });
