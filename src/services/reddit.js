@@ -8,36 +8,34 @@ const HEADERS = { 'User-Agent': 'Squeaker/1.0 (squeaker.app)' };
 export async function fetchGameBuzz(game) {
   const { subreddit, live } = game;
 
-  // Build team identifiers for matching Reddit thread titles
-  const homeName = game.home.name.split(' ').pop().toLowerCase();
-  const awayName = game.away.name.split(' ').pop().toLowerCase();
+  // Build multiple search term variations to maximize match chance
+  const homeLast = game.home.name.split(' ').pop().toLowerCase();
+  const awayLast = game.away.name.split(' ').pop().toLowerCase();
+  const homeFull = game.home.name.toLowerCase();
+  const awayFull = game.away.name.toLowerCase();
   const homeAbbr = game.home.abbr.toLowerCase();
   const awayAbbr = game.away.abbr.toLowerCase();
 
-  // For soccer subreddits (r/soccer), also try full team names
-  const homeFull = game.home.name.toLowerCase();
-  const awayFull = game.away.name.toLowerCase();
-
+  // Try multiple search queries in order of specificity
   const searchTerms = [
-    `${game.away.abbr} ${game.home.abbr}`,
-    `${awayName} ${homeName}`,
-    `${awayFull} ${homeFull}`,
+    `${awayFull} ${homeFull}`,       // "indiana pacers new york knicks"
+    `${awayLast} ${homeLast}`,       // "pacers knicks"
+    `${awayAbbr} ${homeAbbr}`,       // "ind nyk"
+    `${homeFull} ${awayFull}`,       // reversed — some threads list home first
+    `${homeLast} ${awayLast}`,       // reversed short names
   ];
 
-  // Checks if a thread title mentions either team
+  // Flexible team matcher — checks all name variants
   const matchesTeam = (title) =>
-    title.includes(homeName)  || title.includes(awayName)  ||
-    title.includes(homeAbbr)  || title.includes(awayAbbr)  ||
-    title.includes(homeFull)  || title.includes(awayFull);
+    (title.includes(homeLast)  || title.includes(homeAbbr) || title.includes(homeFull)) &&
+    (title.includes(awayLast)  || title.includes(awayAbbr) || title.includes(awayFull));
 
-  // Thread type keywords — soccer uses "match thread" not "game thread"
+  // Soccer uses "match thread", other sports use "game thread"
   const isSoccer = ['mls', 'epl', 'ucl'].includes(game.sport);
-  const gameThreadKws = isSoccer
-    ? ['match thread', 'game thread']
-    : ['game thread'];
-  const postGameKws = isSoccer
-    ? ['post match', 'post-match', 'match thread post']
-    : ['post match', 'post-match', 'postgame', 'post game', 'final score'];
+  const gameThreadKws = isSoccer ? ['match thread', 'game thread'] : ['game thread'];
+  const postGameKws   = isSoccer
+    ? ['post match', 'post-match']
+    : ['post game thread', 'postgame thread', 'post match', 'post-match', 'final score'];
 
   if (!gameThread && !postThread) return null;
 
