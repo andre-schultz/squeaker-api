@@ -81,27 +81,39 @@ export async function fetchGameBuzz(game) {
   };
 }
 
-// Find a Reddit thread matching type keywords and team name
+// Find a Reddit thread matching type keywords and team names
 async function findThread(subreddit, searchTerms, typeKeywords, matchesTeam) {
   for (const term of searchTerms) {
-    try {
-      const query = `${typeKeywords[0]} ${term}`;
-      const url   = `https://www.reddit.com/r/${subreddit}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=new&limit=10&t=week`;
-      const res   = await fetch(url, { headers: HEADERS });
-      if (!res.ok) continue;
-      const data  = await res.json();
+    for (const typeKw of typeKeywords) {
+      try {
+        const query = `${typeKw} ${term}`;
+        const url   = `https://www.reddit.com/r/${subreddit}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=new&limit=15&t=week`;
+        const res   = await fetch(url, { headers: HEADERS });
+        if (!res.ok) {
+          console.log(`[reddit] HTTP ${res.status} for query: ${query}`);
+          continue;
+        }
+        const data  = await res.json();
+        const posts = data.data?.children || [];
+        console.log(`[reddit] Query "${query}" → ${posts.length} results`);
+        posts.slice(0,3).forEach(p => console.log(`  title: ${p.data.title}`));
 
-      const match = (data.data?.children || []).find(p => {
-        const title  = p.data.title.toLowerCase();
-        const hasType = typeKeywords.some(kw => title.includes(kw));
-        return hasType && matchesTeam(title);
-      });
+        const match = posts.find(p => {
+          const title   = p.data.title.toLowerCase();
+          const hasType = typeKeywords.some(kw => title.includes(kw));
+          return hasType && matchesTeam(title);
+        });
 
-      if (match) return match.data;
-    } catch (e) {
-      console.error('Reddit search error:', e.message);
+        if (match) {
+          console.log(`[reddit] ✓ Matched: ${match.data.title}`);
+          return match.data;
+        }
+      } catch (e) {
+        console.error('Reddit search error:', e.message);
+      }
     }
   }
+  console.log(`[reddit] ✗ No thread found in r/${subreddit}`);
   return null;
 }
 

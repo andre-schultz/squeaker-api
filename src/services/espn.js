@@ -152,27 +152,41 @@ function estimateProgress(sportKey, detail, comps) {
   try {
     if (!detail || detail.includes('final') || detail.includes('ft')) return 1.0;
 
+    // Any overtime / extra time / penalties = full game played
+    if (detail.includes('ot') || detail.includes('overtime') ||
+        detail.includes('extra time') || detail.includes('penalties') ||
+        detail.includes('shootout')) return 1.0;
+
+    // Intermission / end of period — treat as end of that period
+    const isIntermission = detail.includes('intermission') ||
+                           detail.includes('end of') ||
+                           detail.includes('halftime') ||
+                           detail.includes('half time') ||
+                           detail.includes('ht');
+
     if (['nfl', 'cfb'].includes(sportKey)) {
       const qtr  = detail.includes('1st') ? 1 : detail.includes('2nd') ? 2
                  : detail.includes('3rd') ? 3 : detail.includes('4th') ? 4 : null;
       const mins = parseMinutes(detail);
-      if (qtr && mins !== null) return Math.min(1.0, ((qtr - 1) * 15 + (15 - mins)) / 60);
-      if (detail.includes('half')) return 0.5;
-      if (detail.includes('ot'))  return 1.0;
+      if (qtr && mins !== null && !isIntermission) {
+        return Math.min(1.0, ((qtr - 1) * 15 + (15 - mins)) / 60);
+      }
+      if (qtr && isIntermission) return Math.min(1.0, (qtr * 15) / 60);
+      if (detail.includes('2nd') && isIntermission) return 0.5;
     }
 
     if (['nba', 'cbb'].includes(sportKey)) {
       const qtr  = detail.includes('1st') ? 1 : detail.includes('2nd') ? 2
                  : detail.includes('3rd') ? 3 : detail.includes('4th') ? 4 : null;
       const mins = parseMinutes(detail);
-      if (sportKey === 'nba' && qtr && mins !== null) {
+      if (sportKey === 'nba' && qtr && mins !== null && !isIntermission) {
         return Math.min(1.0, ((qtr - 1) * 12 + (12 - mins)) / 48);
       }
+      if (sportKey === 'nba' && qtr && isIntermission) return Math.min(1.0, (qtr * 12) / 48);
       if (sportKey === 'cbb') {
-        if (detail.includes('1st half')) return mins != null ? (20 - mins) / 40 : 0.25;
-        if (detail.includes('2nd half')) return mins != null ? (40 - mins) / 40 : 0.75;
+        if (detail.includes('1st half')) return isIntermission ? 0.5 : mins != null ? (20 - mins) / 40 : 0.25;
+        if (detail.includes('2nd half')) return isIntermission ? 1.0 : mins != null ? (40 - mins) / 40 : 0.75;
       }
-      if (detail.includes('ot')) return 1.0;
     }
 
     if (sportKey === 'mlb') {
@@ -187,14 +201,19 @@ function estimateProgress(sportKey, detail, comps) {
       const per  = detail.includes('1st') ? 1 : detail.includes('2nd') ? 2
                  : detail.includes('3rd') ? 3 : null;
       const mins = parseMinutes(detail);
-      if (per && mins !== null) return Math.min(1.0, ((per - 1) * 20 + (20 - mins)) / 60);
-      if (detail.includes('ot')) return 1.0;
+      if (per && mins !== null && !isIntermission) {
+        return Math.min(1.0, ((per - 1) * 20 + (20 - mins)) / 60);
+      }
+      // End of any period — count it as complete
+      if (per && isIntermission) return Math.min(1.0, (per * 20) / 60);
+      // End of 3rd / between 3rd and OT = full regulation
+      if (detail.includes('3rd') || (!per && isIntermission)) return 1.0;
     }
 
     if (['mls', 'epl', 'ucl'].includes(sportKey)) {
       const minMatch = detail.match(/(\d+)'/);
       if (minMatch) return Math.min(1.0, parseInt(minMatch[1]) / 90);
-      if (detail.includes('ht') || detail.includes('half time')) return 0.5;
+      if (isIntermission) return 0.5;
     }
   } catch {}
   return 0.5;
