@@ -3,15 +3,14 @@ import { fetchGameBuzz } from './reddit.js';
 import { setCache, getCache } from './cache.js';
 import { CACHE_TTL } from '../config.js';
 
-const GAME_REFRESH_MS = 3  * 60 * 1000;  // 3 min — active hours
-const BUZZ_REFRESH_MS = 10 * 60 * 1000;  // 10 min — fits within ~90s completion time
-const OFF_REFRESH_MS  = 10 * 60 * 1000;  // 10 min — off hours
+const GAME_REFRESH_MS = 3  * 60 * 1000;  // 3 min
+const BUZZ_REFRESH_MS = 10 * 60 * 1000;  // 10 min
+const OFF_REFRESH_MS  = 10 * 60 * 1000;  // 10 min off hours
 const HISTORY_TTL     = 30 * 24 * 60 * 60;
-const DELAY           = 3000; // 3s between Reddit calls
+const DELAY           = 1500;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Off hours = 2am to 9am ET
 function isOffHours() {
   const etHour = new Date().toLocaleString('en-US', {
     timeZone: 'America/New_York', hour: 'numeric', hour12: false
@@ -20,13 +19,10 @@ function isOffHours() {
   return hour >= 2 && hour < 9;
 }
 
-// Save a finished game snapshot for algorithm training — 30 day TTL, saved once
 async function saveToHistory(game, buzz) {
   if (!game.done) return;
   const date = new Date(game.date).toISOString().slice(0, 10);
   const key  = `history:${date}:${game.id}`;
-
-  // Don't overwrite if already saved
   const existing = await getCache(key);
   if (existing) return;
 
@@ -42,10 +38,10 @@ async function saveToHistory(game, buzz) {
     margin:          game.margin,
     isOT:            game.isOT,
     isComeback:      game.isComeback,
-    excitementScore:   game.excitement,
-    excitementDesc:    game.desc,
-    momentumBonus:     game.momentumBonus   ?? 0,
-    momentumSignals:   game.momentumSignals ?? [],
+    excitementScore: game.excitement,
+    excitementDesc:  game.desc,
+    momentumBonus:   game.momentumBonus   ?? 0,
+    momentumSignals: game.momentumSignals ?? [],
     buzzScore:       buzz?.buzz      ?? null,
     buzzSentiment:   buzz?.sentiment ?? null,
     buzzComments:    buzz?.comments  ?? null,
@@ -58,18 +54,37 @@ async function saveToHistory(game, buzz) {
   console.log(`[history] Saved ${game.away.abbr} vs ${game.home.abbr} (${date})`);
 }
 
-// Run on server start — fetch everything and warm the cache
+// Always fetch fresh buzz from Reddit.
+// Only fall back to existing cache if Reddit call fails or returns nothing.
+async function refreshBuzzForGame(game) {
+  const cacheKey = `buzz:${game.id}`;
+  try {
+    const freshBuzz = await fetchGameBuzz(game);
+    if (freshBuzz) {
+      const ttl = game.live ? CACHE_TTL.buzzLive : CACHE_TTL.buzzFinished;
+      await setCache(cacheKey, freshBuzz, ttl);
+      console.log(`[buzz] Updated ${game.away.abbr} vs ${game.home.abbr}`);
+      return freshBuzz;
+    } else {
+      console.log(`[buzz] No result for ${game.away.abbr} vs ${game.home.abbr} — keeping cache`);
+      return await getCache(cacheKey); // return stale
+    }
+  } catch (e) {
+    console.error(`[buzz] Error for ${game.id}:`, e.message);
+    return await getCache(cacheKey); // return stale on error
+  }
+}
+
 export async function warmCache() {
   console.log('[warmup] Starting cache warm...');
   try {
-    // 1. Fetch and cache all games
     const games   = await fetchAllGames();
     const hasLive = games.some(g => g.live);
     const gameTTL = hasLive ? CACHE_TTL.liveGames : CACHE_TTL.finishedGames;
     await setCache('games:all', games, gameTTL);
     console.log(`[warmup] Cached ${games.length} games (TTL: ${gameTTL}s)`);
 
-    // 2. Fetch buzz only for recent, exciting games to avoid Reddit rate limits
+    // Fetch buzz for recent games
     const buzzCandidates = games.filter(g => {
       const ageHours = (Date.now() - new Date(g.date).getTime()) / 3600000;
       return ageHours <= 36;
@@ -77,18 +92,9 @@ export async function warmCache() {
     console.log(`[warmup] Fetching buzz for ${buzzCandidates.length}/${games.length} games`);
 
     for (const game of buzzCandidates) {
-      try {
-        const buzz = await fetchGameBuzz(game);
-        if (buzz) {
-          const buzzTTL = game.live ? CACHE_TTL.buzzLive : CACHE_TTL.buzzFinished;
-          await setCache(`buzz:${game.id}`, buzz, buzzTTL);
-          console.log(`[warmup] Buzz cached for ${game.away.abbr} vs ${game.home.abbr}`);
-        }
-        await saveToHistory(game, buzz);
-        await sleep(DELAY);
-      } catch (e) {
-        console.error(`[warmup] Buzz failed for game ${game.id}:`, e.message);
-      }
+      const buzz = await refreshBuzzForGame(game);
+      await saveToHistory(game, buzz);
+      await sleep(DELAY);
     }
     console.log('[warmup] Cache warm complete ✓');
   } catch (e) {
@@ -96,7 +102,6 @@ export async function warmCache() {
   }
 }
 
-// Self-scheduling game refresh — checks off hours each cycle
 async function scheduleGameRefresh() {
   const delay = isOffHours() ? OFF_REFRESH_MS : GAME_REFRESH_MS;
   setTimeout(async () => {
@@ -113,7 +118,6 @@ async function scheduleGameRefresh() {
   }, delay);
 }
 
-// Self-scheduling buzz refresh — checks off hours each cycle
 async function scheduleBuzzRefresh() {
   const delay = isOffHours() ? OFF_REFRESH_MS : BUZZ_REFRESH_MS;
   setTimeout(async () => {
@@ -124,17 +128,9 @@ async function scheduleBuzzRefresh() {
         return ageHours <= 36;
       });
       for (const game of buzzCandidates) {
-        try {
-          const buzz = await fetchGameBuzz(game);
-          if (buzz) {
-            const ttl = game.live ? CACHE_TTL.buzzLive : CACHE_TTL.buzzFinished;
-            await setCache(`buzz:${game.id}`, buzz, ttl);
-          }
-          await saveToHistory(game, buzz);
-          await sleep(500);
-        } catch (e) {
-          console.error(`[schedule] Buzz refresh failed for ${game.id}:`, e.message);
-        }
+        const buzz = await refreshBuzzForGame(game);
+        await saveToHistory(game, buzz);
+        await sleep(DELAY);
       }
       console.log(`[schedule] Buzz refresh complete — next in ${delay / 60000} min`);
     } catch (e) {
@@ -144,7 +140,6 @@ async function scheduleBuzzRefresh() {
   }, delay);
 }
 
-// Start everything — called once on server start
 export function startWarmupSchedule() {
   warmCache();
   scheduleGameRefresh();
