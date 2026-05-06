@@ -57,11 +57,12 @@ async function fetchSubreddit(sub) {
   }
 
   if (res.status === 429) {
-    console.warn(`[reddit] 429 from r/${sub}`);
+    console.warn(`[reddit] r/${sub} 429 rate-limited`);
     await drain(res);
     return [];
   }
   if (!res.ok) {
+    console.warn(`[reddit] r/${sub} HTTP ${res.status}`);
     await drain(res);
     return [];
   }
@@ -69,7 +70,8 @@ async function fetchSubreddit(sub) {
   let data;
   try {
     data = await res.json();
-  } catch {
+  } catch (e) {
+    console.error(`[reddit] r/${sub} JSON parse failed: ${e.message}`);
     return [];
   }
 
