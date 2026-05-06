@@ -13,7 +13,7 @@ import { fetchAllGames } from './espn.js';
 import { fetchAllPosts, buzzForGame } from './reddit.js';
 import { fetchAllArticles, articlesForGame, updateGameArticles } from './articles.js';
 import { setCache, getCache } from './cache.js';
-import { CACHE_TTL, REDDIT_ENABLED } from '../config.js';
+import { CACHE_TTL, REDDIT_ENABLED, AUDIT_ENABLED } from '../config.js';
 
 const GAME_REFRESH_MS = 3 * 60 * 1000;     // 3 min, active hours
 const BUZZ_REFRESH_MS = 5 * 60 * 1000;     // 5 min, active hours
@@ -224,7 +224,7 @@ function tick() {
 }
 
 export async function warmCache() {
-  console.log('[warmup] initial warm…');
+  console.log(`[warmup] initial warm… (REDDIT_ENABLED=${REDDIT_ENABLED}, AUDIT_ENABLED=${AUDIT_ENABLED})`);
   await runGameCycle();
   if (REDDIT_ENABLED) {
     await runBuzzCycle();

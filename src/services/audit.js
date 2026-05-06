@@ -11,6 +11,8 @@ import { CACHE_TTL, AUDIT_ENABLED } from '../config.js';
 
 const MAX_SNAPSHOTS = 200;
 
+let auditWriteCount = 0;
+
 // Append a snapshot for this game. No-op when AUDIT_ENABLED is false.
 // Skips the write if the new snapshot is identical to the previous one
 // (common for finished games whose state doesn't change between cycles).
@@ -47,6 +49,11 @@ export async function recordAudit(game, signals) {
     existing.splice(0, existing.length - MAX_SNAPSHOTS);
   }
   await setCache(key, existing, CACHE_TTL.audit);
+  auditWriteCount++;
+  // Log every 100th write so we can see audit is alive without spamming.
+  if (auditWriteCount % 100 === 1) {
+    console.log(`[audit] ${auditWriteCount} snapshots written (latest: ${game.away.abbr} vs ${game.home.abbr})`);
+  }
 }
 
 export async function getAudit(gameId) {
