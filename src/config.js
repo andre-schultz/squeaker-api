@@ -100,7 +100,16 @@ export const CACHE_TTL = {
   liveGames:     180,    // 3 min — live games
   finishedGames: 600,    // 10 min — finished games
   buzzPeak:      432000, // 5 days — peak buzz, refreshed each time it climbs
+  articles:      3600,   // 1 hour — finished games' editorial coverage
+  articlesLive:  600,    // 10 min — live games refresh more often
 };
+
+// ── Feature flags ─────────────────────────────────────────────────────────────
+// Reddit polling is disabled by default until OAuth is wired up — Reddit's
+// unauthenticated API returns 403 from cloud-provider IPs (Railway, AWS, etc).
+// Set REDDIT_ENABLED=true in the Railway env once OAuth credentials are in
+// place to re-enable the buzz cycle without a code change.
+export const REDDIT_ENABLED = process.env.REDDIT_ENABLED === 'true';
 
 // ── Time window ───────────────────────────────────────────────────────────────
 export const HOURS_WINDOW = 120; // show games from last 5 days

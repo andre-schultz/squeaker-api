@@ -11,13 +11,15 @@
 
 import { fetchAllGames } from './espn.js';
 import { fetchAllPosts, buzzForGame } from './reddit.js';
+import { fetchAllArticles, articlesForGame, updateGameArticles } from './articles.js';
 import { setCache, getCache } from './cache.js';
-import { CACHE_TTL } from '../config.js';
+import { CACHE_TTL, REDDIT_ENABLED } from '../config.js';
 
-const GAME_REFRESH_MS = 3 * 60 * 1000; // 3 min, active hours
-const BUZZ_REFRESH_MS = 5 * 60 * 1000; // 5 min, active hours
-const OFF_REFRESH_MS = 10 * 60 * 1000; // 10 min, off hours
-const TICK_MS = 60 * 1000; // wake up once a minute, decide what to run
+const GAME_REFRESH_MS = 3 * 60 * 1000;     // 3 min, active hours
+const BUZZ_REFRESH_MS = 5 * 60 * 1000;     // 5 min, active hours
+const ARTICLE_REFRESH_MS = 10 * 60 * 1000; // 10 min — articles update slowly
+const OFF_REFRESH_MS = 10 * 60 * 1000;     // 10 min, off hours
+const TICK_MS = 60 * 1000;                  // wake up once a minute
 const HISTORY_TTL = 30 * 24 * 60 * 60;
 
 // ── Off-hours throttle ────────────────────────────────────────────────────────
@@ -162,30 +164,74 @@ async function saveHistory(game, peak) {
   console.log(`[history] saved ${game.away.abbr} vs ${game.home.abbr} (${date})`);
 }
 
+// ── Article cycle (poll league news, match to games, store per-game) ──────────
+
+let articleRunning = false;
+
+async function runArticleCycle() {
+  if (articleRunning) return;
+  articleRunning = true;
+  const t0 = Date.now();
+  try {
+    const games = (await getCache('games:all')) || [];
+    if (games.length === 0) {
+      console.log('[articles] games:all empty, skipping cycle');
+      return;
+    }
+    const articles = await fetchAllArticles();
+    console.log(`[articles] pool: ${articles.length} articles`);
+
+    let matched = 0;
+    for (const game of games) {
+      const gameArticles = articlesForGame(game, articles);
+      if (gameArticles.length > 0) matched++;
+      await updateGameArticles(game, gameArticles);
+    }
+    console.log(
+      `[articles] cycle: ${games.length} games, ${matched} matched (${Date.now() - t0}ms)`
+    );
+  } catch (e) {
+    console.error('[articles] cycle failed:', e.message);
+  } finally {
+    articleRunning = false;
+  }
+}
+
 // ── Tick loop ─────────────────────────────────────────────────────────────────
 
 let lastGameRun = 0;
 let lastBuzzRun = 0;
+let lastArticleRun = 0;
 
 function tick() {
   const gameInterval = isOffHours() ? OFF_REFRESH_MS : GAME_REFRESH_MS;
   const buzzInterval = isOffHours() ? OFF_REFRESH_MS : BUZZ_REFRESH_MS;
+  const articleInterval = isOffHours() ? OFF_REFRESH_MS : ARTICLE_REFRESH_MS;
   const now = Date.now();
 
   if (now - lastGameRun >= gameInterval) {
     lastGameRun = now;
     runGameCycle();
   }
-  if (now - lastBuzzRun >= buzzInterval) {
+  if (REDDIT_ENABLED && now - lastBuzzRun >= buzzInterval) {
     lastBuzzRun = now;
     runBuzzCycle();
+  }
+  if (now - lastArticleRun >= articleInterval) {
+    lastArticleRun = now;
+    runArticleCycle();
   }
 }
 
 export async function warmCache() {
   console.log('[warmup] initial warm…');
   await runGameCycle();
-  await runBuzzCycle();
+  if (REDDIT_ENABLED) {
+    await runBuzzCycle();
+  } else {
+    console.log('[buzz] disabled (REDDIT_ENABLED != true) — skipping');
+  }
+  await runArticleCycle();
   console.log('[warmup] initial warm complete');
 }
 
