@@ -99,9 +99,28 @@ export const BORING_WORDS = [
 export const CACHE_TTL = {
   liveGames:     180,    // 3 min — live games
   finishedGames: 600,    // 10 min — finished games
-  buzzLive:      432000, // 5 days — matches game window, never disappears mid-session
-  buzzFinished:  432000, // 5 days — same
+  buzzPeak:      432000, // 5 days — peak buzz, refreshed each time it climbs
 };
 
 // ── Time window ───────────────────────────────────────────────────────────────
 export const HOURS_WINDOW = 120; // show games from last 5 days
+
+// ── Reddit polling ────────────────────────────────────────────────────────────
+// Subreddits we poll in bulk. Each cycle we hit hot.json once per sub and
+// match the returned posts to ongoing games — no per-game searches.
+// Covers general sports buzz + the per-league subs used in SPORTS above.
+export const REDDIT_SUBS = [
+  'sports',            // cross-sport general buzz
+  'sportsbook',        // line-movement chatter, often game-specific
+  'nba',
+  'nfl',
+  'baseball',          // MLB
+  'hockey',            // NHL
+  'CFB',               // college football
+  'CollegeBasketball', // college basketball
+  'MLS',
+  'soccer',            // EPL/UCL chatter lives here
+];
+
+// How many posts to pull per subreddit per cycle (Reddit caps at 100).
+export const REDDIT_POSTS_PER_SUB = 100;

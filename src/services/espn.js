@@ -1,4 +1,6 @@
-import fetch from 'node-fetch';
+// Uses native global fetch (Node 18+). node-fetch v3 was previously implicated
+// in a slow memory leak via undici pool retention; native fetch hits the
+// same undici layer but without the wrapper.
 import { SPORTS, HOURS_WINDOW } from '../config.js';
 import { calcExcitement, detectComeback, excitementDesc } from './algorithm.js';
 import { recordSnapshot, getTimeline, analyzeMomentum } from './timeline.js';
@@ -26,12 +28,19 @@ async function fetchSport(key, cfg, dates) {
     try {
       const url = `${BASE}/${cfg.espnSport}/${cfg.espnLeague}/scoreboard${date ? `?dates=${date}` : ''}`;
       const res = await fetch(url, { headers: { 'User-Agent': 'Squeaker/1.0' } });
-      if (!res.ok) continue;
-      const data = await res.json();
-      for (const ev of (data.events || [])) {
+      if (!res.ok) {
+        // Drain body so the underlying socket is released.
+        try { await res.text(); } catch {}
+        continue;
+      }
+      let data = await res.json();
+      const events = data.events || [];
+      for (const ev of events) {
         const game = await parseEvent(ev, key, cfg);
         if (game) games.push(game);
       }
+      // Release the parsed payload before iterating to the next date.
+      data = null;
     } catch (e) {
       console.error(`ESPN fetch error [${key}]:`, e.message);
     }

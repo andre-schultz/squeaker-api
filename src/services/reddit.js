@@ -1,132 +1,198 @@
-import fetch from 'node-fetch';
-import { SPORTS, EXCITEMENT_WORDS, BORING_WORDS } from '../config.js';
+// Bulk-poll model: rather than searching Reddit per-game (slow, noisy, hits
+// rate limits), we pull a single hot.json page from each tracked subreddit
+// per cycle and match the returned posts against the games we already know
+// about. One subreddit fetch covers all games being discussed in that sub.
+//
+// Sentiment is derived from post titles (good vs boring keyword hits). We
+// don't fetch comments per game — that's where the old model burned through
+// API budget for thin signal.
+
+import {
+  REDDIT_SUBS,
+  REDDIT_POSTS_PER_SUB,
+  EXCITEMENT_WORDS,
+  BORING_WORDS,
+  SPORTS,
+} from '../config.js';
 import { calcBuzz } from './algorithm.js';
 
 const HEADERS = { 'User-Agent': 'Squeaker/1.0 (squeaker.app)' };
-const DELAY   = 1500; // ms between Reddit API calls
+const POLL_DELAY_MS = 1500;
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function fetchGameBuzz(game) {
-  const { subreddit, live } = game;
+// ── Public ────────────────────────────────────────────────────────────────────
 
-  const homeFull = game.home.name.toLowerCase();
-  const awayFull = game.away.name.toLowerCase();
+// Fetch hot posts from every tracked subreddit. Returns a flat array of
+// normalized posts. Errors per-sub are swallowed so one bad sub doesn't kill
+// the cycle.
+export async function fetchAllPosts() {
+  const out = [];
+  for (const sub of REDDIT_SUBS) {
+    const posts = await fetchSubreddit(sub);
+    for (const p of posts) out.push(p);
+    await sleep(POLL_DELAY_MS);
+  }
+  return out;
+}
+
+// Compute current buzz for a single game from the post pool. Returns null if
+// no posts match.
+export function buzzForGame(game, posts) {
+  const matches = matchGame(game, posts);
+  if (matches.length === 0) return null;
+  return scoreBuzz(game, matches);
+}
+
+// ── Internals ─────────────────────────────────────────────────────────────────
+
+async function fetchSubreddit(sub) {
+  const url = `https://www.reddit.com/r/${sub}/hot.json?limit=${REDDIT_POSTS_PER_SUB}`;
+  let res;
+  try {
+    res = await fetch(url, { headers: HEADERS });
+  } catch (e) {
+    console.error(`[reddit] r/${sub} fetch error: ${e.message}`);
+    return [];
+  }
+
+  if (res.status === 429) {
+    console.warn(`[reddit] 429 from r/${sub}`);
+    await drain(res);
+    return [];
+  }
+  if (!res.ok) {
+    await drain(res);
+    return [];
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    return [];
+  }
+
+  const children = data?.data?.children || [];
+  const posts = [];
+  for (const c of children) {
+    const p = normalizePost(c?.data, sub);
+    if (p) posts.push(p);
+  }
+  // Drop the parsed payload reference so the GC can reclaim it before we
+  // move on to the next subreddit. (Belt-and-suspenders against the leak.)
+  data = null;
+  console.log(`[reddit] r/${sub}: ${posts.length} posts`);
+  return posts;
+}
+
+// Make sure response bodies are always read so the underlying socket
+// is released. Critical with native undici fetch.
+async function drain(res) {
+  try {
+    await res.text();
+  } catch {
+    /* ignore */
+  }
+}
+
+function normalizePost(p, sub) {
+  if (!p?.title || !p.permalink) return null;
+  return {
+    subreddit: sub,
+    title: p.title,
+    titleLower: p.title.toLowerCase(),
+    score: p.score | 0,
+    comments: p.num_comments | 0,
+    created_utc: p.created_utc || 0,
+    permalink: p.permalink,
+  };
+}
+
+// ── Matching ──────────────────────────────────────────────────────────────────
+
+function matchGame(game, posts) {
+  const homeFull = (game.home.fullName || game.home.name).toLowerCase();
+  const awayFull = (game.away.fullName || game.away.name).toLowerCase();
   const homeAbbr = game.home.abbr.toLowerCase();
   const awayAbbr = game.away.abbr.toLowerCase();
   const homeLast = game.home.name.split(' ').pop().toLowerCase();
   const awayLast = game.away.name.split(' ').pop().toLowerCase();
 
-  const matchesTeam = (title) =>
-    (title.includes(homeLast) || title.includes(homeAbbr) || title.includes(homeFull)) &&
-    (title.includes(awayLast) || title.includes(awayAbbr) || title.includes(awayFull));
+  // Title must mention BOTH teams (any of full / last-word / abbr) AND have
+  // been posted within the game's plausible window (1h before → 5h after).
+  const gameTs = game.date ? new Date(game.date).getTime() / 1000 : null;
+  const winStart = gameTs ? gameTs - 3600 : null;
+  const winEnd = gameTs ? gameTs + 18000 : null;
 
-  // Use short names for the search query (better Reddit search results)
-  // but match against all name variants for accuracy
-  const isSoccer = ['mls', 'epl', 'ucl'].includes(game.sport);
-  const typeKw   = isSoccer ? 'match thread' : 'game thread';
-  const query    = `${typeKw} ${awayLast} ${homeLast}`;
+  const out = [];
+  for (const p of posts) {
+    if (winStart !== null && (p.created_utc < winStart || p.created_utc > winEnd)) continue;
+    const t = p.titleLower;
+    const home = t.includes(homeLast) || t.includes(homeAbbr) || t.includes(homeFull);
+    const away = t.includes(awayLast) || t.includes(awayAbbr) || t.includes(awayFull);
+    if (home && away) out.push(p);
+  }
+  return out;
+}
 
-  await sleep(DELAY);
-    // Game window: thread must be created within 1 hour before
-    // game start and up to 5 hours after (covers long games/OT)
-    const gameTs = game.date ? new Date(game.date).getTime() / 1000 : null;
-    const windowStart = gameTs ? gameTs - 3600  : null;  // 1 hour before
-    const windowEnd   = gameTs ? gameTs + 18000 : null;  // 5 hours after
+// ── Scoring ───────────────────────────────────────────────────────────────────
 
-    const thread = await findThread(subreddit, query, typeKw, matchesTeam, windowStart, windowEnd);
-  if (!thread) return null;
+function scoreBuzz(game, matches) {
+  const sportCfg = SPORTS[game.sport] || {
+    base: { comments: 1000, upvotes: 200, velocity: 200 },
+  };
 
-  const comments  = await fetchComments(thread.permalink);
-  const sentiment = scoreSentiment(comments);
+  // Aggregate engagement across every matched post (a game can have a Game
+  // Thread + Post-Game Thread + reactions in r/sports etc.)
+  let comments = 0;
+  let upvotes = 0;
+  let earliest = Infinity;
+  let topPost = matches[0];
+  for (const p of matches) {
+    comments += p.comments;
+    upvotes += p.score;
+    if (p.created_utc && p.created_utc < earliest) earliest = p.created_utc;
+    if (p.comments > topPost.comments) topPost = p;
+  }
 
-  const now      = Date.now() / 1000;
-  const hrs      = Math.max(0.25, (now - thread.created_utc) / 3600);
-  const velocity = Math.round((thread.num_comments || 0) / hrs);
+  const now = Date.now() / 1000;
+  const hrs = earliest === Infinity ? 1 : Math.max(0.25, (now - earliest) / 3600);
+  const velocity = Math.round(comments / hrs);
 
-  const sportCfg = Object.values(SPORTS).find(s => s.sub === subreddit) ||
-    { base: { comments: 1000, upvotes: 200, velocity: 200 } };
+  // Sentiment from titles only — fast, no extra HTTP. Captures the broad
+  // tone of how the game is being discussed.
+  const titles = matches.map((p) => p.titleLower).join(' ');
+  const good = countHits(titles, EXCITEMENT_WORDS);
+  const bad = countHits(titles, BORING_WORDS);
+  const total = good + bad;
+  const sentiment = total === 0 ? 50 : Math.round((good / total) * 100);
 
-  const buzz = calcBuzz({
-    comments:  thread.num_comments || 0,
-    upvotes:   thread.score || 0,
-    velocity,
-    sentiment,
-    isLive:    live,
-  }, sportCfg);
+  const buzz = calcBuzz(
+    { comments, upvotes, velocity, sentiment, isLive: game.live },
+    sportCfg
+  );
+
+  // Split out positive and negative buzz so the UI can show both poles.
+  // Both can be high simultaneously — that's a "passionate" game.
+  const goodBuzz = total === 0 ? 0 : Math.round(buzz * (good / total));
+  const badBuzz = total === 0 ? 0 : Math.round(buzz * (bad / total));
 
   return {
     buzz,
-    comments:  thread.num_comments || 0,
+    goodBuzz,
+    badBuzz,
+    comments,
+    upvotes,
     velocity,
     sentiment,
-    threadUrl: `https://reddit.com${thread.permalink}`,
+    matchedPosts: matches.length,
+    threadUrl: `https://reddit.com${topPost.permalink}`,
   };
 }
 
-async function findThread(subreddit, query, typeKw, matchesTeam, windowStart, windowEnd) {
-  try {
-    const url = `https://www.reddit.com/r/${subreddit}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=new&limit=10&t=week`;
-    const res = await fetch(url, { headers: HEADERS });
-
-    if (res.status === 429) {
-      console.log(`[reddit] 429 — backing off 10s`);
-      await sleep(10000);
-      return null;
-    }
-    if (!res.ok) return null;
-
-    const data  = await res.json();
-    const posts = data.data?.children || [];
-    console.log(`[reddit] "${query}" → ${posts.length} results`);
-
-    const match = posts.find(p => {
-      const title   = p.data.title.toLowerCase();
-      const created = p.data.created_utc;
-      // If we have a valid time window, use it; otherwise fall back to name matching only
-      const inWindow = (windowStart && windowEnd)
-        ? created >= windowStart && created <= windowEnd
-        : true;
-      return inWindow && title.includes(typeKw) && matchesTeam(title);
-    });
-
-    if (match) {
-      console.log(`[reddit] ✓ ${match.data.title}`);
-    } else {
-      const timeMatches = windowStart
-        ? posts.filter(p => p.data.created_utc >= windowStart && p.data.created_utc <= windowEnd).length
-        : posts.length;
-      console.log(`[reddit] ✗ No match (${timeMatches}/${posts.length} in time window)`);
-    }
-
-    return match?.data || null;
-  } catch (e) {
-    console.error('[reddit] Error:', e.message);
-    return null;
-  }
-}
-
-async function fetchComments(permalink) {
-  try {
-    const url = `https://www.reddit.com${permalink}.json?limit=100&sort=top`;
-    const res = await fetch(url, { headers: HEADERS });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data[1]?.data?.children || [])
-      .map(c => c.data?.body || '')
-      .filter(b => b.length > 5);
-  } catch { return []; }
-}
-
-function scoreSentiment(comments) {
-  if (comments.length === 0) return 50;
-  let excited = 0, boring = 0;
-  for (const body of comments.slice(0, 100)) {
-    const b = body.toLowerCase();
-    if (EXCITEMENT_WORDS.some(w => b.includes(w))) excited++;
-    else if (BORING_WORDS.some(w => b.includes(w))) boring++;
-  }
-  const total = excited + boring;
-  if (total === 0) return 50;
-  return Math.round((excited / total) * 100);
+function countHits(text, words) {
+  let n = 0;
+  for (const w of words) if (text.includes(w)) n++;
+  return n;
 }
