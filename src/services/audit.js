@@ -13,11 +13,18 @@ const MAX_SNAPSHOTS = 200;
 
 let auditWriteCount = 0;
 
+// In-memory set of done games we've already audited in this process. Once
+// a game is final, its inputs are frozen — the dedup logic catches the
+// no-write case but still does a Upstash read each cycle. Tracking in
+// memory short-circuits the read entirely. Resets on container restart.
+const doneAudited = new Set();
+
 // Append a snapshot for this game. No-op when AUDIT_ENABLED is false.
 // Skips the write if the new snapshot is identical to the previous one
 // (common for finished games whose state doesn't change between cycles).
 export async function recordAudit(game, signals) {
   if (!AUDIT_ENABLED) return;
+  if (game.done && doneAudited.has(game.id)) return;
 
   const key = `audit:${game.id}`;
   const existing = (await getCache(key)) || [];
@@ -49,6 +56,10 @@ export async function recordAudit(game, signals) {
     existing.splice(0, existing.length - MAX_SNAPSHOTS);
   }
   await setCache(key, existing, CACHE_TTL.audit);
+
+  // Done games will never change again; mark so future cycles skip the read.
+  if (game.done) doneAudited.add(game.id);
+
   auditWriteCount++;
   // Log every 100th write so we can see audit is alive without spamming.
   if (auditWriteCount % 100 === 1) {

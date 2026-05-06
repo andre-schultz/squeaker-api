@@ -1,7 +1,7 @@
 // Uses native global fetch (Node 18+). node-fetch v3 was previously implicated
 // in a slow memory leak via undici pool retention; native fetch hits the
 // same undici layer but without the wrapper.
-import { SPORTS, HOURS_WINDOW } from '../config.js';
+import { SPORTS, HOURS_WINDOW, AUDIT_ENABLED, REDDIT_ENABLED } from '../config.js';
 import { calcExcitement, calcExcitementBreakdown, detectComeback, excitementDesc } from './algorithm.js';
 import { recordSnapshot, getTimeline, analyzeMomentum } from './timeline.js';
 import {
@@ -181,28 +181,30 @@ async function parseEvent(ev, sportKey, cfg) {
     subreddit:       cfg.sub,
   };
 
-  // ── Audit snapshot — full breakdown of how this score was reached.
-  // Reads side-channel signals (buzz, articles) from cache so the snapshot
-  // is a complete view of what the system "saw" at this moment.
+  // ── Audit snapshot — captures everything that affects the excitement
+  // score so a stored game can be replayed and explained later.
   // No-op when AUDIT_ENABLED is false.
-  const breakdown = calcExcitementBreakdown(
-    margin, isOT, isComeback, cfg, momentumBonus,
-    live ? progress : 1.0, dramaBonus, upsetBonus,
-  );
-  const [cachedBuzz, cachedArticles] = await Promise.all([
-    getCache(`buzz:${ev.id}`),
-    getCache(`articles:${ev.id}`),
-  ]);
-  await recordAudit(game, {
-    momentum: { bonus: momentumBonus, signals },
-    wp:       { bonus: dramaBonus, signals: wpSignals, maxSwing },
-    upset:    { bonus: upsetBonus, winnerPreGameWP },
-    articles: cachedArticles ? { count: cachedArticles.count } : { count: 0 },
-    buzz:     cachedBuzz
-      ? { peak: cachedBuzz.buzz, sentiment: cachedBuzz.sentiment, matchedPosts: cachedBuzz.matchedPosts }
-      : null,
-    excitement: breakdown,
-  });
+  //
+  // Articles are intentionally NOT in the audit — they don't feed the
+  // excitement score. The buzz read only happens when Reddit is on (and
+  // therefore there's actual buzz data to capture); skipping it when
+  // disabled saves a per-game cache hit each cycle.
+  if (AUDIT_ENABLED) {
+    const breakdown = calcExcitementBreakdown(
+      margin, isOT, isComeback, cfg, momentumBonus,
+      live ? progress : 1.0, dramaBonus, upsetBonus,
+    );
+    const cachedBuzz = REDDIT_ENABLED ? await getCache(`buzz:${ev.id}`) : null;
+    await recordAudit(game, {
+      momentum: { bonus: momentumBonus, signals },
+      wp:       { bonus: dramaBonus, signals: wpSignals, maxSwing },
+      upset:    { bonus: upsetBonus, winnerPreGameWP },
+      buzz:     cachedBuzz
+        ? { peak: cachedBuzz.buzz, sentiment: cachedBuzz.sentiment, matchedPosts: cachedBuzz.matchedPosts }
+        : null,
+      excitement: breakdown,
+    });
+  }
 
   return game;
 }

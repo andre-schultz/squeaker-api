@@ -14,6 +14,13 @@ import { CACHE_TTL, WP_WINDOW_MS } from '../config.js';
 const CORE = 'https://sports.core.api.espn.com/v2/sports';
 const HEADERS = { 'User-Agent': 'Squeaker/1.0' };
 
+// In-memory set of done games we've already snapshotted in this process.
+// Once a game is final, its WP timeline is locked — re-polling ESPN and
+// re-reading Upstash on every cycle is wasted work. The set resets on
+// container restart, which is fine: the next first-cycle re-captures and
+// dedup at the snapshot layer prevents duplicate writes.
+const doneSnapshotted = new Set();
+
 // ── Public ────────────────────────────────────────────────────────────────────
 
 // Fetch current WP for a game and append to the timeline. Returns the
@@ -23,6 +30,8 @@ export async function recordWPSnapshot(game, espnSport, espnLeague) {
   if (!WP_WINDOW_MS[game.sport]) return null;
   // Skip pre-game / unknown
   if (!game.live && !game.done) return null;
+  // Done games only need to be polled once for their final state
+  if (game.done && doneSnapshotted.has(game.id)) return null;
 
   const current = await fetchCurrentWP(espnSport, espnLeague, game.id);
   if (!current) return await getWPTimeline(game.id);
@@ -45,6 +54,10 @@ export async function recordWPSnapshot(game, espnSport, espnLeague) {
   };
   timeline.push(snapshot);
   await setCache(key, timeline, CACHE_TTL.probabilities);
+
+  // After capturing a done game once, mark it so we never poll again.
+  if (game.done) doneSnapshotted.add(game.id);
+
   return timeline;
 }
 
