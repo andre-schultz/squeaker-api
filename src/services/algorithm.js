@@ -1,11 +1,13 @@
 // ── Excitement Score (0-100) ──────────────────────────────────────────────────
-// Closeness:        0-90 pts  (dominant factor)
+// Closeness:        0-70 pts  (dominant factor)
 // Comeback:          +10 pts
 // OT:                +10 pts
 // Momentum bonus:    +20 pts  (late goals, lead changes, time spent close)
 // WP-drama bonus:    +15 pts  (sport-windowed win-prob swings, late comebacks)
 // Upset bonus:       +10 pts  (underdog won outright)
-// Capped at 99
+//
+// Theoretical raw max if all bonuses fire: 135. Clamped to 100 at the end.
+// Bonuses are independent — each contributes its full value if earned.
 
 export function calcExcitement(
   margin,
@@ -18,12 +20,15 @@ export function calcExcitement(
   upsetBonus = 0,
 ) {
   const cls = closenessScore(margin, sport.margins);
-  const otBonus       = isOT       ? Math.min(10, 100 - cls) : 0;
-  const comebackBonus = isComeback ? Math.min(10, 100 - cls - otBonus) : 0;
-  const momBonus      = Math.min(momentumBonus, 100 - cls - otBonus - comebackBonus);
-  const wpBonus       = Math.min(wpDramaBonus, 100 - cls - otBonus - comebackBonus - momBonus);
-  const upsBonus      = Math.min(upsetBonus,  100 - cls - otBonus - comebackBonus - momBonus - wpBonus);
-  const raw           = cls + otBonus + comebackBonus + momBonus + wpBonus + upsBonus;
+  const otBonus       = isOT       ? 10 : 0;
+  const comebackBonus = isComeback ? 10 : 0;
+  const raw =
+    cls +
+    otBonus +
+    comebackBonus +
+    momentumBonus +
+    wpDramaBonus +
+    upsetBonus;
 
   // For live games, scale score by how far through the game we are.
   // A 0-0 tie in the 1st inning scores much lower than 0-0 in the 9th.
@@ -33,7 +38,7 @@ export function calcExcitement(
     ? 0.3 + (progress / 0.8) * 0.7   // ramps from 0.3→1.0 over first 80%
     : 1.0;                             // last 20% = full score
 
-  return Math.min(99, Math.round(raw * progressMultiplier));
+  return Math.min(100, Math.round(raw * progressMultiplier));
 }
 
 // Returns the per-bonus breakdown used for the audit log. Same logic as
@@ -50,12 +55,15 @@ export function calcExcitementBreakdown(
   upsetBonus = 0,
 ) {
   const cls = closenessScore(margin, sport.margins);
-  const otBonus       = isOT       ? Math.min(10, 100 - cls) : 0;
-  const comebackBonus = isComeback ? Math.min(10, 100 - cls - otBonus) : 0;
-  const momBonus      = Math.min(momentumBonus, 100 - cls - otBonus - comebackBonus);
-  const wpBonus       = Math.min(wpDramaBonus, 100 - cls - otBonus - comebackBonus - momBonus);
-  const upsBonus      = Math.min(upsetBonus,  100 - cls - otBonus - comebackBonus - momBonus - wpBonus);
-  const raw           = cls + otBonus + comebackBonus + momBonus + wpBonus + upsBonus;
+  const otBonus       = isOT       ? 10 : 0;
+  const comebackBonus = isComeback ? 10 : 0;
+  const raw =
+    cls +
+    otBonus +
+    comebackBonus +
+    momentumBonus +
+    wpDramaBonus +
+    upsetBonus;
 
   const progressMultiplier = progress < 0.8 ? 0.3 + (progress / 0.8) * 0.7 : 1.0;
 
@@ -63,20 +71,22 @@ export function calcExcitementBreakdown(
     closeness:  cls,
     ot:         otBonus,
     comeback:   comebackBonus,
-    momentum:   momBonus,
-    wp:         wpBonus,
-    upset:      upsBonus,
+    momentum:   momentumBonus,
+    wp:         wpDramaBonus,
+    upset:      upsetBonus,
     raw,
     progressMultiplier,
-    final:      Math.min(99, Math.round(raw * progressMultiplier)),
+    final:      Math.min(100, Math.round(raw * progressMultiplier)),
   };
 }
 
+// Closeness — proportionally rescaled from old 90/72/46/16/0 to fit a
+// 0-70 ceiling, preserving the relative gap between tiers.
 function closenessScore(margin, m) {
-  if (margin <= m.great)   return 90;
-  if (margin <= m.good)    return 72;
-  if (margin <= m.ok)      return 46;
-  if (margin <= m.blowout) return 16;
+  if (margin <= m.great)   return 70;
+  if (margin <= m.good)    return 56;
+  if (margin <= m.ok)      return 36;
+  if (margin <= m.blowout) return 12;
   return 0;
 }
 
