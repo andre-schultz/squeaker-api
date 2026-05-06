@@ -7,6 +7,9 @@
 //   • opening line — first odds we see for a game
 //   • current line — latest odds
 //   • history — sparse timeline of line changes during/after the game
+//   • bettingBuzz — single 0-100 score for display, derived from total
+//                   spread shift + number of meaningful moves. Frozen at
+//                   game end so the post-game number is stable.
 
 import { setCache, getCache } from './cache.js';
 import { CACHE_TTL } from '../config.js';
@@ -26,7 +29,12 @@ export async function recordOdds(game, espnSport, espnLeague) {
   if (!current) return null;
 
   const key = `odds:${game.id}`;
-  const existing = (await getCache(key)) || { opening: null, current: null, history: [] };
+  const existing = (await getCache(key)) || {
+    opening:     null,
+    current:     null,
+    history:     [],
+    bettingBuzz: 0,
+  };
 
   // Capture opening line on first sight
   if (!existing.opening) existing.opening = { ...current, t: Date.now() };
@@ -45,6 +53,14 @@ export async function recordOdds(game, espnSport, espnLeague) {
   }
 
   existing.current = { ...current, t: Date.now() };
+
+  // Single 0-100 score for the frontend. Frozen once the game ends so the
+  // post-game display value doesn't drift if a book regrades the line. The
+  // first time we see a done game without a stored value, compute once.
+  if (!game.done || existing.bettingBuzz == null) {
+    existing.bettingBuzz = computeBettingBuzz(existing);
+  }
+
   await setCache(key, existing, CACHE_TTL.odds);
   return existing;
 }
@@ -92,4 +108,21 @@ async function fetchCurrentOdds(espnSport, espnLeague, eventId) {
              : null,
     details:   entry.details || null,
   };
+}
+
+// 0-100 single-number summary of line-movement intensity.
+//
+//   spreadShift × 15  →  total magnitude of spread movement
+//   moveCount    × 8  →  volatility / number of meaningful moves
+//
+// Examples:
+//   Line never moved:                                 0
+//   Quiet drift (open -3, close -3.5, 1 move):       16
+//   Steady money (open -7, close -10, 4 moves):      77
+//   Whiplash (open -3, ping-pong to +2, 6 moves):   100
+function computeBettingBuzz({ opening, current, history }) {
+  if (!opening || !current) return 0;
+  const spreadShift = Math.abs((current.spread ?? 0) - (opening.spread ?? 0));
+  const moveCount = Math.max(0, (history?.length ?? 0) - 1);
+  return Math.min(100, Math.round(spreadShift * 15 + moveCount * 8));
 }
