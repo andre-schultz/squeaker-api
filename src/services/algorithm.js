@@ -3,14 +3,27 @@
 // Comeback:          +10 pts
 // OT:                +10 pts
 // Momentum bonus:    +20 pts  (late goals, lead changes, time spent close)
-// Capped at 100
+// WP-drama bonus:    +15 pts  (sport-windowed win-prob swings, late comebacks)
+// Upset bonus:       +10 pts  (underdog won outright)
+// Capped at 99
 
-export function calcExcitement(margin, isOT, isComeback, sport, momentumBonus = 0, progress = 1.0) {
+export function calcExcitement(
+  margin,
+  isOT,
+  isComeback,
+  sport,
+  momentumBonus = 0,
+  progress = 1.0,
+  wpDramaBonus = 0,
+  upsetBonus = 0,
+) {
   const cls = closenessScore(margin, sport.margins);
   const otBonus       = isOT       ? Math.min(10, 100 - cls) : 0;
   const comebackBonus = isComeback ? Math.min(10, 100 - cls - otBonus) : 0;
   const momBonus      = Math.min(momentumBonus, 100 - cls - otBonus - comebackBonus);
-  const raw           = cls + otBonus + comebackBonus + momBonus;
+  const wpBonus       = Math.min(wpDramaBonus, 100 - cls - otBonus - comebackBonus - momBonus);
+  const upsBonus      = Math.min(upsetBonus,  100 - cls - otBonus - comebackBonus - momBonus - wpBonus);
+  const raw           = cls + otBonus + comebackBonus + momBonus + wpBonus + upsBonus;
 
   // For live games, scale score by how far through the game we are.
   // A 0-0 tie in the 1st inning scores much lower than 0-0 in the 9th.
@@ -21,6 +34,42 @@ export function calcExcitement(margin, isOT, isComeback, sport, momentumBonus = 
     : 1.0;                             // last 20% = full score
 
   return Math.min(99, Math.round(raw * progressMultiplier));
+}
+
+// Returns the per-bonus breakdown used for the audit log. Same logic as
+// calcExcitement but exposes intermediate values rather than the rounded
+// total. Use this when recording audit snapshots.
+export function calcExcitementBreakdown(
+  margin,
+  isOT,
+  isComeback,
+  sport,
+  momentumBonus = 0,
+  progress = 1.0,
+  wpDramaBonus = 0,
+  upsetBonus = 0,
+) {
+  const cls = closenessScore(margin, sport.margins);
+  const otBonus       = isOT       ? Math.min(10, 100 - cls) : 0;
+  const comebackBonus = isComeback ? Math.min(10, 100 - cls - otBonus) : 0;
+  const momBonus      = Math.min(momentumBonus, 100 - cls - otBonus - comebackBonus);
+  const wpBonus       = Math.min(wpDramaBonus, 100 - cls - otBonus - comebackBonus - momBonus);
+  const upsBonus      = Math.min(upsetBonus,  100 - cls - otBonus - comebackBonus - momBonus - wpBonus);
+  const raw           = cls + otBonus + comebackBonus + momBonus + wpBonus + upsBonus;
+
+  const progressMultiplier = progress < 0.8 ? 0.3 + (progress / 0.8) * 0.7 : 1.0;
+
+  return {
+    closeness:  cls,
+    ot:         otBonus,
+    comeback:   comebackBonus,
+    momentum:   momBonus,
+    wp:         wpBonus,
+    upset:      upsBonus,
+    raw,
+    progressMultiplier,
+    final:      Math.min(99, Math.round(raw * progressMultiplier)),
+  };
 }
 
 function closenessScore(margin, m) {

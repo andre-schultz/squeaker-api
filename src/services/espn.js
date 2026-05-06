@@ -2,8 +2,16 @@
 // in a slow memory leak via undici pool retention; native fetch hits the
 // same undici layer but without the wrapper.
 import { SPORTS, HOURS_WINDOW } from '../config.js';
-import { calcExcitement, detectComeback, excitementDesc } from './algorithm.js';
+import { calcExcitement, calcExcitementBreakdown, detectComeback, excitementDesc } from './algorithm.js';
 import { recordSnapshot, getTimeline, analyzeMomentum } from './timeline.js';
+import {
+  recordWPSnapshot,
+  analyzeWPDrama,
+  analyzeUpset,
+} from './probabilities.js';
+import { recordOdds } from './odds.js';
+import { recordAudit } from './audit.js';
+import { getCache } from './cache.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 
@@ -109,8 +117,32 @@ async function parseEvent(ev, sportKey, cfg) {
   // Analyze momentum from full scoring timeline
   const { momentumBonus, signals } = analyzeMomentum(timeline, { sport: sportKey });
 
+  // ── Win-probability signal ──────────────────────────────────────────
+  // Append to the per-game WP timeline (no-op for soccer / pre-game).
+  // Then run sport-windowed drama + upset analysis on the full timeline.
+  const wpTimeline = await recordWPSnapshot(partialGame, cfg.espnSport, cfg.espnLeague);
+  const { dramaBonus, signals: wpSignals, maxSwing } = analyzeWPDrama(wpTimeline, sportKey);
+  const { upsetBonus, winnerPreGameWP } = analyzeUpset(wpTimeline, {
+    ...partialGame,
+    home: { ...partialGame.home, score: homeScore },
+    away: { ...partialGame.away, score: awayScore },
+  });
+
+  // ── Odds (separate "betting buzz" bucket — does not feed excitement) ─
+  // Fire-and-forget; failures don't block the game record.
+  recordOdds(partialGame, cfg.espnSport, cfg.espnLeague).catch(() => {});
+
   // For live games, scale by progress so early-game close scores don't rank too high
-  const excitement = calcExcitement(margin, isOT, isComeback, cfg, momentumBonus, live ? progress : 1.0);
+  const excitement = calcExcitement(
+    margin,
+    isOT,
+    isComeback,
+    cfg,
+    momentumBonus,
+    live ? progress : 1.0,
+    dramaBonus,
+    upsetBonus,
+  );
 
   const mkTeam = (T, score, winner) => ({
     name:     T.team.shortDisplayName || T.team.displayName,
@@ -122,7 +154,7 @@ async function parseEvent(ev, sportKey, cfg) {
     winner:   !!winner,
   });
 
-  return {
+  const game = {
     id:              ev.id,
     sport:           sportKey,
     sportName:       cfg.name,
@@ -134,6 +166,11 @@ async function parseEvent(ev, sportKey, cfg) {
     isComeback,
     momentumBonus,
     momentumSignals: signals,
+    wpDramaBonus:    dramaBonus,
+    wpDramaSignals:  wpSignals,
+    wpMaxSwing:      maxSwing,
+    upsetBonus,
+    winnerPreGameWP,
     progress,
     gameStage:       rawDetail,
     done,
@@ -143,6 +180,31 @@ async function parseEvent(ev, sportKey, cfg) {
     date:            ev.date,
     subreddit:       cfg.sub,
   };
+
+  // ── Audit snapshot — full breakdown of how this score was reached.
+  // Reads side-channel signals (buzz, articles) from cache so the snapshot
+  // is a complete view of what the system "saw" at this moment.
+  // No-op when AUDIT_ENABLED is false.
+  const breakdown = calcExcitementBreakdown(
+    margin, isOT, isComeback, cfg, momentumBonus,
+    live ? progress : 1.0, dramaBonus, upsetBonus,
+  );
+  const [cachedBuzz, cachedArticles] = await Promise.all([
+    getCache(`buzz:${ev.id}`),
+    getCache(`articles:${ev.id}`),
+  ]);
+  await recordAudit(game, {
+    momentum: { bonus: momentumBonus, signals },
+    wp:       { bonus: dramaBonus, signals: wpSignals, maxSwing },
+    upset:    { bonus: upsetBonus, winnerPreGameWP },
+    articles: cachedArticles ? { count: cachedArticles.count } : { count: 0 },
+    buzz:     cachedBuzz
+      ? { peak: cachedBuzz.buzz, sentiment: cachedBuzz.sentiment, matchedPosts: cachedBuzz.matchedPosts }
+      : null,
+    excitement: breakdown,
+  });
+
+  return game;
 }
 
 // Returns date strings for today and the past 4 days (5 days total)

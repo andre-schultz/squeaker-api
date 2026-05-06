@@ -102,6 +102,23 @@ export const CACHE_TTL = {
   buzzPeak:      432000, // 5 days — peak buzz, refreshed each time it climbs
   articles:      3600,   // 1 hour — finished games' editorial coverage
   articlesLive:  600,    // 10 min — live games refresh more often
+  probabilities: 30 * 24 * 3600, // 30 days — WP timeline, mirrors score timeline
+  odds:          30 * 24 * 3600, // 30 days — odds timeline
+  audit:         3 * 24 * 3600,  // 3 days — algorithm audit log
+};
+
+// ── Win-probability sliding-window lengths (per sport) ────────────────────────
+// Drama signal = "the game flipped within this window". Window length adapts
+// to each sport's natural drama cadence so a 25% threshold means the same
+// thing across NBA (gradual WP) and MLB (one-swing-can-flip-it).
+export const WP_WINDOW_MS = {
+  nba: 2 * 60_000,   // 2 min — typical clutch run
+  cbb: 2 * 60_000,
+  nfl: 90_000,       // ~1 drive
+  cfb: 90_000,
+  mlb: 12 * 60_000,  // ~1 half-inning at modern pace
+  nhl: 5 * 60_000,   // meaningful in a 60-min game
+  // soccer (mls/epl/ucl) intentionally absent — ESPN doesn't expose WP for soccer
 };
 
 // ── Feature flags ─────────────────────────────────────────────────────────────
@@ -110,6 +127,11 @@ export const CACHE_TTL = {
 // Set REDDIT_ENABLED=true in the Railway env once OAuth credentials are in
 // place to re-enable the buzz cycle without a code change.
 export const REDDIT_ENABLED = process.env.REDDIT_ENABLED === 'true';
+
+// Algorithm audit logging — captures every signal the score depends on plus
+// the per-bonus breakdown of the final excitement score. Off by default to
+// keep DB writes minimal; flip on when actively tuning weights.
+export const AUDIT_ENABLED = process.env.AUDIT_ENABLED === 'true';
 
 // ── Time window ───────────────────────────────────────────────────────────────
 export const HOURS_WINDOW = 120; // show games from last 5 days
