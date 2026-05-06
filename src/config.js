@@ -122,16 +122,23 @@ export const WP_WINDOW_MS = {
 };
 
 // ── Feature flags ─────────────────────────────────────────────────────────────
+// Accept any common "truthy" string so dashboard inputs like "True", "1",
+// or "yes" don't silently fail.
+function isTruthy(v) {
+  if (v == null) return false;
+  return ['true', '1', 'yes', 'on', 'y'].includes(String(v).toLowerCase().trim());
+}
+
 // Reddit polling is disabled by default until OAuth is wired up — Reddit's
 // unauthenticated API returns 403 from cloud-provider IPs (Railway, AWS, etc).
 // Set REDDIT_ENABLED=true in the Railway env once OAuth credentials are in
 // place to re-enable the buzz cycle without a code change.
-export const REDDIT_ENABLED = process.env.REDDIT_ENABLED === 'true';
+export const REDDIT_ENABLED = isTruthy(process.env.REDDIT_ENABLED);
 
 // Algorithm audit logging — captures every signal the score depends on plus
 // the per-bonus breakdown of the final excitement score. Off by default to
 // keep DB writes minimal; flip on when actively tuning weights.
-export const AUDIT_ENABLED = process.env.AUDIT_ENABLED === 'true';
+export const AUDIT_ENABLED = isTruthy(process.env.AUDIT_ENABLED);
 
 // ── Time window ───────────────────────────────────────────────────────────────
 export const HOURS_WINDOW = 120; // show games from last 5 days

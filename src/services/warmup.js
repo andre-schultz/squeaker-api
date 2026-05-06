@@ -224,7 +224,11 @@ function tick() {
 }
 
 export async function warmCache() {
-  console.log(`[warmup] initial warm… (REDDIT_ENABLED=${REDDIT_ENABLED}, AUDIT_ENABLED=${AUDIT_ENABLED})`);
+  console.log(
+    `[warmup] initial warm… ` +
+    `REDDIT_ENABLED=${REDDIT_ENABLED} (raw=${JSON.stringify(process.env.REDDIT_ENABLED)}) ` +
+    `AUDIT_ENABLED=${AUDIT_ENABLED} (raw=${JSON.stringify(process.env.AUDIT_ENABLED)})`
+  );
   await runGameCycle();
   if (REDDIT_ENABLED) {
     await runBuzzCycle();
