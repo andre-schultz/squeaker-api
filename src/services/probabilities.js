@@ -130,6 +130,70 @@ export function analyzeWPDrama(timeline, sport) {
   };
 }
 
+// "Live action" score — how exciting is the game RIGHT NOW. Looks at WP
+// movement in the recent window only, combining three factors:
+//
+//   • totalSwing       — sum of |Δ WP| across all samples in window
+//                        (proxies "how much the game flipped")
+//   • maxSingleSwing   — biggest single-step Δ in window
+//                        (proxies "did one big play just happen")
+//   • directionChanges — count of WP direction reversals
+//                        (proxies "back-and-forth chaos")
+//
+// All three blend into a 0-100 score capped at 100. Returns the breakdown
+// alongside the score so audit logs capture enough to fine-tune later.
+//
+// Returns 0 for done games / empty timelines / pre-game (no recent WP).
+export function computeLiveActionBuzz(timeline) {
+  const result = {
+    score: 0,
+    totalSwing: 0,
+    maxSingleSwing: 0,
+    directionChanges: 0,
+    windowSamples: 0,
+    windowMs: LIVE_ACTION_WINDOW_MS,
+  };
+
+  if (!timeline || timeline.length < 2) return result;
+
+  const now = Date.now();
+  const recent = [];
+  for (const s of timeline) {
+    if (now - s.t < LIVE_ACTION_WINDOW_MS) recent.push(s);
+  }
+  result.windowSamples = recent.length;
+  if (recent.length < 2) return result;
+
+  let lastDir = 0;
+  for (let i = 1; i < recent.length; i++) {
+    const delta = recent[i].homeWP - recent[i - 1].homeWP;
+    const absDelta = Math.abs(delta);
+    result.totalSwing += absDelta;
+    if (absDelta > result.maxSingleSwing) result.maxSingleSwing = absDelta;
+
+    const dir = delta > 0 ? 1 : delta < 0 ? -1 : 0;
+    if (dir !== 0) {
+      if (lastDir !== 0 && dir !== lastDir) result.directionChanges++;
+      lastDir = dir;
+    }
+  }
+
+  // 0-100 composite. Calibration:
+  //   totalSwing × 150  →  60 pts at 0.40 cumulative WP movement
+  //   maxSingle  × 100  →  30 pts at 0.30 max single-step swing
+  //   reversals  × 5    →  25 pts at 5 direction changes
+  // A truly chaotic, back-and-forth stretch hits 100. A single big play
+  // with no reversals lands ~50-60. A quiet stretch stays near 0.
+  const raw =
+    result.totalSwing * 150 +
+    result.maxSingleSwing * 100 +
+    result.directionChanges * 5;
+  result.score = Math.min(100, Math.round(raw));
+  return result;
+}
+
+const LIVE_ACTION_WINDOW_MS = 10 * 60 * 1000; // last 10 minutes
+
 // Did an underdog win? Returns { upsetBonus, winnerPreGameWP }.
 // Bonus scales linearly: 50% pre-game WP → 0, 0% → 10.
 export function analyzeUpset(timeline, game) {

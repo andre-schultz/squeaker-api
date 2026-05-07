@@ -8,8 +8,9 @@ import {
   recordWPSnapshot,
   analyzeWPDrama,
   analyzeUpset,
+  computeLiveActionBuzz,
 } from './probabilities.js';
-import { recordOdds } from './odds.js';
+import { getOrFetchOdds } from './odds.js';
 import { recordAudit } from './audit.js';
 import { getCache } from './cache.js';
 
@@ -128,9 +129,16 @@ async function parseEvent(ev, sportKey, cfg) {
     away: { ...partialGame.away, score: awayScore },
   });
 
-  // ── Odds (separate "betting buzz" bucket — does not feed excitement) ─
-  // Fire-and-forget; failures don't block the game record.
-  recordOdds(partialGame, cfg.espnSport, cfg.espnLeague).catch(() => {});
+  // ── Frozen odds (one-shot fetch on first sighting, cached for display) ─
+  // ESPN's /odds endpoint returns the closing line and doesn't update during
+  // live play, so polling is wasted. We grab once and embed on the game.
+  const odds = await getOrFetchOdds(ev.id, cfg.espnSport, cfg.espnLeague);
+
+  // ── Live-action score from recent WP volatility ──────────────────────
+  // The "betting buzz" replacement: same intent ("game is exciting right
+  // now"), free, derived from data we already collect. 0 when not live.
+  const liveActionRaw = live ? computeLiveActionBuzz(wpTimeline) : null;
+  const liveActionBuzz = liveActionRaw?.score ?? 0;
 
   // For live games, scale by progress so early-game close scores don't rank too high
   const excitement = calcExcitement(
@@ -179,6 +187,8 @@ async function parseEvent(ev, sportKey, cfg) {
     desc:            excitementDesc(margin, isOT, isComeback, cfg),
     date:            ev.date,
     subreddit:       cfg.sub,
+    odds,                  // frozen pre-game line for display
+    liveActionBuzz,        // 0-100, real-time WP-volatility score
   };
 
   // ── Audit snapshot — captures everything that affects the excitement
@@ -196,10 +206,13 @@ async function parseEvent(ev, sportKey, cfg) {
     );
     const cachedBuzz = REDDIT_ENABLED ? await getCache(`buzz:${ev.id}`) : null;
     await recordAudit(game, {
-      momentum: { bonus: momentumBonus, signals },
-      wp:       { bonus: dramaBonus, signals: wpSignals, maxSwing },
-      upset:    { bonus: upsetBonus, winnerPreGameWP },
-      buzz:     cachedBuzz
+      momentum:   { bonus: momentumBonus, signals },
+      wp:         { bonus: dramaBonus, signals: wpSignals, maxSwing },
+      upset:      { bonus: upsetBonus, winnerPreGameWP },
+      // Full liveAction breakdown so we can later see exactly which
+      // component (totalSwing, max swing, reversals) drove the score.
+      liveAction: liveActionRaw,
+      buzz:       cachedBuzz
         ? { peak: cachedBuzz.buzz, sentiment: cachedBuzz.sentiment, matchedPosts: cachedBuzz.matchedPosts }
         : null,
       excitement: breakdown,

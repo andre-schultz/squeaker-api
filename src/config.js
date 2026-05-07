@@ -103,7 +103,7 @@ export const CACHE_TTL = {
   articles:      3600,   // 1 hour — finished games' editorial coverage
   articlesLive:  600,    // 10 min — live games refresh more often
   probabilities: 30 * 24 * 3600, // 30 days — WP timeline, mirrors score timeline
-  odds:          30 * 24 * 3600, // 30 days — odds timeline
+  frozenOdds:    30 * 24 * 3600, // 30 days — pre-game line, fetched once
   audit:         3 * 24 * 3600,  // 3 days — algorithm audit log
 };
 

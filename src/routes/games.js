@@ -62,18 +62,6 @@ router.get('/:id/wp', async (req, res) => {
   }
 });
 
-// GET /api/games/:id/odds — opening, current, and movement history
-// Returns { opening, current, history: [...] } or null
-router.get('/:id/odds', async (req, res) => {
-  try {
-    const odds = await getCache(`odds:${req.params.id}`);
-    res.json(odds || { opening: null, current: null, history: [] });
-  } catch (e) {
-    console.error(`GET /api/games/${req.params.id}/odds error:`, e.message);
-    res.status(500).json({ error: 'Failed to fetch odds' });
-  }
-});
-
 // GET /api/games/:id/audit — algorithm audit log (when AUDIT_ENABLED was on)
 // Returns the full per-cycle snapshot list (up to 200 entries, last 3 days)
 router.get('/:id/audit', async (req, res) => {
