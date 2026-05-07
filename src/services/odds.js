@@ -18,9 +18,12 @@ const CORE = 'https://sports.core.api.espn.com/v2/sports';
 const HEADERS = { 'User-Agent': 'Squeaker/1.0' };
 
 // Minimum changes to record a new history entry (avoid noise from quote
-// providers churning by 0.5 every minute):
-const SPREAD_DELTA = 0.5;
+// providers churning back and forth on small ticks). Tuned after observing
+// that real moves often happen on the moneyline alone — books frequently
+// adjust juice without nudging the spread number.
+const SPREAD_DELTA = 0.25;
 const TOTAL_DELTA = 0.5;
+const ML_DELTA = 5;
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
@@ -39,12 +42,16 @@ export async function recordOdds(game, espnSport, espnLeague) {
   // Capture opening line on first sight
   if (!existing.opening) existing.opening = { ...current, t: Date.now() };
 
-  // Record history entry only if line moved meaningfully
+  // Record history entry only if line moved meaningfully on ANY axis —
+  // spread, total, or either moneyline. Books often shift only ML when
+  // public money is one-sided, so spread-only detection misses real action.
   const last = existing.current;
   const moved =
     !last ||
-    Math.abs((current.spread ?? 0) - (last.spread ?? 0)) >= SPREAD_DELTA ||
-    Math.abs((current.overUnder ?? 0) - (last.overUnder ?? 0)) >= TOTAL_DELTA;
+    Math.abs((current.spread    ?? 0) - (last.spread    ?? 0)) >= SPREAD_DELTA ||
+    Math.abs((current.overUnder ?? 0) - (last.overUnder ?? 0)) >= TOTAL_DELTA ||
+    Math.abs((current.homeML    ?? 0) - (last.homeML    ?? 0)) >= ML_DELTA ||
+    Math.abs((current.awayML    ?? 0) - (last.awayML    ?? 0)) >= ML_DELTA;
 
   if (moved) {
     existing.history.push({ ...current, t: Date.now() });
@@ -113,16 +120,32 @@ async function fetchCurrentOdds(espnSport, espnLeague, eventId) {
 // 0-100 single-number summary of line-movement intensity.
 //
 //   spreadShift × 15  →  total magnitude of spread movement
-//   moveCount    × 8  →  volatility / number of meaningful moves
+//   totalShift  × 5   →  movement on the over/under
+//   mlShift     × 0.5 →  juice movement (per cent of ML shift)
+//   moveCount   × 8   →  volatility / number of meaningful moves
 //
-// Examples:
-//   Line never moved:                                 0
-//   Quiet drift (open -3, close -3.5, 1 move):       16
-//   Steady money (open -7, close -10, 4 moves):      77
-//   Whiplash (open -3, ping-pong to +2, 6 moves):   100
+// Includes ML so spread-stable / juice-only moves still register —
+// common pattern when books prefer to adjust juice over moving the number.
+//
+// Examples (using opening as the baseline):
+//   Line never moved:                                              0
+//   Juice-only (ML -150 → -180, 1 move):                          23
+//   Quiet drift (spread -3 → -3.5, ML -150 → -160, 1 move):       21
+//   Steady money (spread -7 → -10, ML -200 → -250, 4 moves):     100 (capped)
+//   Whiplash (spread -3 → +2, ML +130 → -180, 6 moves):          100 (capped)
 function computeBettingBuzz({ opening, current, history }) {
   if (!opening || !current) return 0;
-  const spreadShift = Math.abs((current.spread ?? 0) - (opening.spread ?? 0));
-  const moveCount = Math.max(0, (history?.length ?? 0) - 1);
-  return Math.min(100, Math.round(spreadShift * 15 + moveCount * 8));
+  const spreadShift = Math.abs((current.spread    ?? 0) - (opening.spread    ?? 0));
+  const totalShift  = Math.abs((current.overUnder ?? 0) - (opening.overUnder ?? 0));
+  const mlShift     = Math.abs((current.homeML    ?? 0) - (opening.homeML    ?? 0));
+  const moveCount   = Math.max(0, (history?.length ?? 0) - 1);
+  return Math.min(
+    100,
+    Math.round(
+      spreadShift * 15 +
+      totalShift  * 5  +
+      mlShift     * 0.5 +
+      moveCount   * 8
+    )
+  );
 }
