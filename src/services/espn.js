@@ -1,7 +1,7 @@
 // Uses native global fetch (Node 18+). node-fetch v3 was previously implicated
 // in a slow memory leak via undici pool retention; native fetch hits the
 // same undici layer but without the wrapper.
-import { SPORTS, HOURS_WINDOW, AUDIT_ENABLED, REDDIT_ENABLED } from '../config.js';
+import { SPORTS, HOURS_WINDOW, CACHE_TTL, AUDIT_ENABLED, REDDIT_ENABLED } from '../config.js';
 import { calcExcitement, calcExcitementBreakdown, detectComeback, excitementDesc } from './algorithm.js';
 import { recordSnapshot, getTimeline, analyzeMomentum } from './timeline.js';
 import {
@@ -12,7 +12,7 @@ import {
 } from './probabilities.js';
 import { getOrFetchOdds } from './odds.js';
 import { recordAudit } from './audit.js';
-import { getCache } from './cache.js';
+import { getCache, setCache } from './cache.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 
@@ -135,10 +135,20 @@ async function parseEvent(ev, sportKey, cfg) {
   const odds = await getOrFetchOdds(ev.id, cfg.espnSport, cfg.espnLeague);
 
   // ── Live-action score from recent WP volatility ──────────────────────
-  // The "betting buzz" replacement: same intent ("game is exciting right
-  // now"), free, derived from data we already collect. 0 when not live.
+  // Two fields exposed:
+  //   currentLiveActionBuzz — real-time signal, 0 when not live. Reflects
+  //                           the last 10 minutes of WP swings.
+  //   liveActionBuzz        — peak across the game's lifetime. Once a
+  //                           game has had a wild moment, it stays
+  //                           memorialized. Frozen after game ends.
   const liveActionRaw = live ? computeLiveActionBuzz(wpTimeline) : null;
-  const liveActionBuzz = liveActionRaw?.score ?? 0;
+  const currentLiveActionBuzz = liveActionRaw?.score ?? 0;
+  const peakKey = `liveActionPeak:${ev.id}`;
+  const cachedPeak = (await getCache(peakKey)) || 0;
+  const liveActionBuzz = Math.max(cachedPeak, currentLiveActionBuzz);
+  if (liveActionBuzz > cachedPeak) {
+    await setCache(peakKey, liveActionBuzz, CACHE_TTL.liveActionPeak);
+  }
 
   // For live games, scale by progress so early-game close scores don't rank too high
   const excitement = calcExcitement(
@@ -187,8 +197,9 @@ async function parseEvent(ev, sportKey, cfg) {
     desc:            excitementDesc(margin, isOT, isComeback, cfg),
     date:            ev.date,
     subreddit:       cfg.sub,
-    odds,                  // frozen pre-game line for display
-    liveActionBuzz,        // 0-100, real-time WP-volatility score
+    odds,                     // frozen pre-game line for display
+    liveActionBuzz,           // 0-100, peak across whole game (sticky)
+    currentLiveActionBuzz,    // 0-100, real-time, 0 when not live
   };
 
   // ── Audit snapshot — captures everything that affects the excitement
@@ -211,7 +222,12 @@ async function parseEvent(ev, sportKey, cfg) {
       upset:      { bonus: upsetBonus, winnerPreGameWP },
       // Full liveAction breakdown so we can later see exactly which
       // component (totalSwing, max swing, reversals) drove the score.
-      liveAction: liveActionRaw,
+      // current = the moment-by-moment value, peak = sticky high-water mark.
+      liveAction: {
+        current:   currentLiveActionBuzz,
+        peak:      liveActionBuzz,
+        breakdown: liveActionRaw, // null when not live
+      },
       buzz:       cachedBuzz
         ? { peak: cachedBuzz.buzz, sentiment: cachedBuzz.sentiment, matchedPosts: cachedBuzz.matchedPosts }
         : null,

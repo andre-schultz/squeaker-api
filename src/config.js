@@ -102,9 +102,10 @@ export const CACHE_TTL = {
   buzzPeak:      432000, // 5 days — peak buzz, refreshed each time it climbs
   articles:      3600,   // 1 hour — finished games' editorial coverage
   articlesLive:  600,    // 10 min — live games refresh more often
-  probabilities: 30 * 24 * 3600, // 30 days — WP timeline, mirrors score timeline
-  frozenOdds:    30 * 24 * 3600, // 30 days — pre-game line, fetched once
-  audit:         3 * 24 * 3600,  // 3 days — algorithm audit log
+  probabilities:  30 * 24 * 3600, // 30 days — WP timeline, mirrors score timeline
+  frozenOdds:     30 * 24 * 3600, // 30 days — pre-game line, fetched once
+  liveActionPeak: 30 * 24 * 3600, // 30 days — peak live-action score per game
+  audit:          3 * 24 * 3600,  // 3 days — algorithm audit log
 };
 
 // ── Win-probability sliding-window lengths (per sport) ────────────────────────
