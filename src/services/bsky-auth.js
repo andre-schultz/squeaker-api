@@ -16,20 +16,45 @@ const PDS = 'https://bsky.social/xrpc';
 const SESSION_KEY = 'bsky:session';
 const SESSION_TTL = 7 * 24 * 3600; // 7 days — refresh JWT lives this long
 
+// Strip invisible Unicode formatting/control characters (zero-width spaces,
+// bidi controls, BOM). Pasting a handle from Notes/PDFs/web pages can carry
+// these along; Bluesky treats them as part of the identifier and rejects the
+// login. Also normalize whitespace and lowercase to match Bluesky's handle
+// canonicalization.
+function sanitizeHandle(h) {
+  if (!h) return null;
+  return h
+    .replace(/[​-‏‪-‮⁠-⁯﻿]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+const HANDLE = sanitizeHandle(BLUESKY_HANDLE);
+const PASSWORD = BLUESKY_APP_PASSWORD; // app passwords use ASCII; don't mangle
+
+// Cooldown after a failed login. If creds are bad, hammering createSession
+// gets the account 429-rate-limited within ~13 attempts. Cache the failure
+// in-process so the rest of the cycle (and the next few cycles) skips auth
+// and falls through to anonymous requests until either creds change or the
+// container restarts.
+const FAILURE_COOLDOWN_MS = 15 * 60 * 1000; // 15 min
+let lastLoginFailureAt = 0;
+
 // Dedup concurrent login/refresh calls so a burst of 401s doesn't fan out
 // into N parallel logins (only matters if we ever parallelize the cycle).
 let inflight = null;
 
 export function authConfigured() {
-  return !!(BLUESKY_HANDLE && BLUESKY_APP_PASSWORD);
+  return !!(HANDLE && PASSWORD);
 }
 
 // Returns a usable access JWT or null. Pulls from cache first; logs in if
-// the cache is empty.
+// the cache is empty AND we're not inside a post-failure cooldown window.
 export async function getAccessJwt() {
   if (!authConfigured()) return null;
   const cached = await getCache(SESSION_KEY);
   if (cached?.accessJwt) return cached.accessJwt;
+  if (Date.now() - lastLoginFailureAt < FAILURE_COOLDOWN_MS) return null;
   return await login();
 }
 
@@ -60,13 +85,16 @@ async function doLogin() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        identifier: BLUESKY_HANDLE,
-        password: BLUESKY_APP_PASSWORD,
+        identifier: HANDLE,
+        password: PASSWORD,
       }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       console.error(`[bsky-auth] login failed: HTTP ${res.status} ${body.slice(0, 200)}`);
+      // Trip the cooldown on any non-OK response. 401 = bad creds, 429 =
+      // we already overshot — both call for backing off, not retrying.
+      lastLoginFailureAt = Date.now();
       return null;
     }
     const data = await res.json();
@@ -75,6 +103,7 @@ async function doLogin() {
     return data.accessJwt;
   } catch (e) {
     console.error(`[bsky-auth] login error: ${e.message}`);
+    lastLoginFailureAt = Date.now();
     return null;
   }
 }
