@@ -12,6 +12,7 @@
 import { fetchAllGames } from './espn.js';
 import { fetchAllPosts, buzzForGame } from './reddit.js';
 import { chatterForGame } from './bluesky.js';
+import { authConfigured } from './bsky-auth.js';
 import { fetchAllArticles, articlesForGame, updateGameArticles } from './articles.js';
 import { setCache, getCache } from './cache.js';
 import {
@@ -19,6 +20,7 @@ import {
   REDDIT_ENABLED,
   AUDIT_ENABLED,
   BLUESKY_ENABLED,
+  BLUESKY_HANDLE,
   BLUESKY_QUERY_DELAY_MS,
 } from '../config.js';
 
@@ -344,6 +346,8 @@ export async function warmCache() {
     `[warmup] initial warm… ` +
     `REDDIT_ENABLED=${REDDIT_ENABLED} (raw=${JSON.stringify(process.env.REDDIT_ENABLED)}) ` +
     `BLUESKY_ENABLED=${BLUESKY_ENABLED} (raw=${JSON.stringify(process.env.BLUESKY_ENABLED)}) ` +
+    `BLUESKY_AUTH=${authConfigured() ? `configured(${BLUESKY_HANDLE})` : 'unset'} ` +
+    `(handle_raw=${JSON.stringify(process.env.BLUESKY_HANDLE)} pw_set=${process.env.BLUESKY_APP_PASSWORD ? 'yes' : 'no'}) ` +
     `AUDIT_ENABLED=${AUDIT_ENABLED} (raw=${JSON.stringify(process.env.AUDIT_ENABLED)})`
   );
   await runGameCycle();
