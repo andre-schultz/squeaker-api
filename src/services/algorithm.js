@@ -135,6 +135,31 @@ function normalize(value, baseline) {
   return Math.min(100, Math.round((value / baseline) * 100));
 }
 
+// ── Chatter Score (0-100) ────────────────────────────────────────────────────
+// Bluesky-only. Unlike calcBuzz, baselines are universal (not per-sport) so
+// popular games legitimately outscore niche ones — a playoff NBA game should
+// dwarf a Tuesday MLS in chatter, and that's the desired behavior.
+//
+// Used three times per game by the chatter cycle: once over all matched posts
+// (chatter), once over excitement-bucketed posts (goodChatter), once over
+// boring-bucketed posts (badChatter). Each independent 0-100.
+export function calcChatter({ posts, likes, reposts, replies }, baselines) {
+  const postsScore   = normalize(posts,   baselines.posts);
+  const likesScore   = normalize(likes,   baselines.likes);
+  const repostsScore = normalize(reposts, baselines.reposts);
+  const repliesScore = normalize(replies, baselines.replies);
+
+  // Posts and likes get the heaviest weight: post count is the truest "people
+  // are talking" signal; likes are the broadest passive engagement. Reposts
+  // and replies move slower and are noisier per-post.
+  return Math.round(
+    postsScore   * 0.30 +
+    likesScore   * 0.30 +
+    repostsScore * 0.20 +
+    repliesScore * 0.20
+  );
+}
+
 // ── Labels ───────────────────────────────────────────────────────────────────
 export function excitementLabel(score) {
   if (score >= 80) return 'Must Watch';

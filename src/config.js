@@ -100,6 +100,7 @@ export const CACHE_TTL = {
   liveGames:     180,    // 3 min — live games
   finishedGames: 600,    // 10 min — finished games
   buzzPeak:      432000, // 5 days — peak buzz, refreshed each time it climbs
+  chatterPeak:   432000, // 5 days — peak Bluesky chatter, sticky high-water mark
   articles:      3600,   // 1 hour — finished games' editorial coverage
   articlesLive:  600,    // 10 min — live games refresh more often
   probabilities:  30 * 24 * 3600, // 30 days — WP timeline, mirrors score timeline
@@ -163,3 +164,33 @@ export const REDDIT_SUBS = [
 
 // How many posts to pull per subreddit per cycle (Reddit caps at 100).
 export const REDDIT_POSTS_PER_SUB = 100;
+
+// ── Bluesky chatter ───────────────────────────────────────────────────────────
+// Per-game queries against the public AppView's searchPosts endpoint. Each
+// game gets its own search ("<homeName> <awayName>", sort=latest, since=
+// game−30min) so a game's chatter score reflects actual posts about THAT
+// game rather than a fixed pool divvied up across the league. Popular games
+// naturally outscore quiet ones — that's the whole point.
+export const BLUESKY_ENABLED = process.env.BLUESKY_ENABLED == null
+  ? true
+  : isTruthy(process.env.BLUESKY_ENABLED);
+
+// Per-game search limit. Bluesky's searchPosts caps at 100 per call.
+export const BLUESKY_LIMIT_PER_GAME = 100;
+
+// Delay between per-game queries, ms. Public AppView allows ~3000 req/5min/IP.
+export const BLUESKY_QUERY_DELAY_MS = 250;
+
+// How early before tipoff a post counts as "about this game".
+export const BLUESKY_SINCE_OFFSET_MS = 30 * 60 * 1000; // 30 min
+
+// Engagement baselines for the 0-100 chatter scale. Single global set (not
+// per-sport) so popularity bias flows through: an NBA finals naturally hits
+// the ceiling, a Tuesday MLS game lands in the 5-15 range. Tune these once
+// real data shows where games actually cluster.
+export const CHATTER_BASELINES = {
+  posts:   30,    // matched posts in a single 30-min-window snapshot
+  likes:   1500,
+  reposts: 400,
+  replies: 250,
+};

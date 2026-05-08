@@ -37,6 +37,20 @@ router.get('/:id/buzz', async (req, res) => {
   }
 });
 
+// GET /api/games/:id/chatter — Bluesky chatter peak (sticky high-water mark)
+// Returns { chatter, goodChatter, badChatter, matchedPosts, ... } or
+// { chatter: null } if no chatter has been recorded for this game.
+router.get('/:id/chatter', async (req, res) => {
+  try {
+    const chatter = await getCache(`chatter:${req.params.id}`);
+    if (chatter) return res.json(chatter);
+    res.json({ chatter: null });
+  } catch (e) {
+    console.error(`GET /api/games/${req.params.id}/chatter error:`, e.message);
+    res.status(500).json({ error: 'Failed to fetch chatter' });
+  }
+});
+
 // GET /api/games/:id/articles — ESPN editorial coverage for a game
 // Returns { count, articles: [{ headline, url, type, published, image, ... }] }
 router.get('/:id/articles', async (req, res) => {

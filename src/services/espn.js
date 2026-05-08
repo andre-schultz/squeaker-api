@@ -1,7 +1,7 @@
 // Uses native global fetch (Node 18+). node-fetch v3 was previously implicated
 // in a slow memory leak via undici pool retention; native fetch hits the
 // same undici layer but without the wrapper.
-import { SPORTS, HOURS_WINDOW, CACHE_TTL, AUDIT_ENABLED, REDDIT_ENABLED } from '../config.js';
+import { SPORTS, HOURS_WINDOW, CACHE_TTL, AUDIT_ENABLED, REDDIT_ENABLED, BLUESKY_ENABLED } from '../config.js';
 import { calcExcitement, calcExcitementBreakdown, detectComeback, excitementDesc } from './algorithm.js';
 import { recordSnapshot, getTimeline, analyzeMomentum } from './timeline.js';
 import {
@@ -216,6 +216,7 @@ async function parseEvent(ev, sportKey, cfg) {
       live ? progress : 1.0, dramaBonus, upsetBonus,
     );
     const cachedBuzz = REDDIT_ENABLED ? await getCache(`buzz:${ev.id}`) : null;
+    const cachedChatter = BLUESKY_ENABLED ? await getCache(`chatter:${ev.id}`) : null;
     await recordAudit(game, {
       momentum:   { bonus: momentumBonus, signals },
       wp:         { bonus: dramaBonus, signals: wpSignals, maxSwing },
@@ -230,6 +231,22 @@ async function parseEvent(ev, sportKey, cfg) {
       },
       buzz:       cachedBuzz
         ? { peak: cachedBuzz.buzz, sentiment: cachedBuzz.sentiment, matchedPosts: cachedBuzz.matchedPosts }
+        : null,
+      // Chatter: three independent 0-100 peaks plus the raw engagement
+      // counts that fed them. Lets us replay a finished game and see
+      // exactly how loud Bluesky got and how the sentiment split played out.
+      chatter:    cachedChatter
+        ? {
+            peak:         cachedChatter.chatter,
+            goodPeak:     cachedChatter.goodChatter,
+            badPeak:      cachedChatter.badChatter,
+            matchedPosts: cachedChatter.matchedPosts,
+            goodPosts:    cachedChatter.goodPosts,
+            badPosts:     cachedChatter.badPosts,
+            likes:        cachedChatter.likes,
+            reposts:      cachedChatter.reposts,
+            replies:      cachedChatter.replies,
+          }
         : null,
       excitement: breakdown,
     });
