@@ -69,8 +69,14 @@ async function searchPosts(game) {
     return [];
   }
   if (!res.ok) {
-    console.warn(`[bluesky] HTTP ${res.status} on "${q}"`);
-    await drain(res);
+    // Log a snippet of the body so we can tell apart CDN blocks (HTML),
+    // AT-Proto error envelopes ({error, message}), and other failures.
+    let snippet = '';
+    try {
+      const body = await res.text();
+      snippet = body.slice(0, 200).replace(/\s+/g, ' ');
+    } catch { /* ignore */ }
+    console.warn(`[bluesky] HTTP ${res.status} on "${q}" body=${snippet}`);
     return [];
   }
 
