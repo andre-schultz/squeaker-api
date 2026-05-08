@@ -178,8 +178,10 @@ export const BLUESKY_ENABLED = process.env.BLUESKY_ENABLED == null
 // Per-game search limit. Bluesky's searchPosts caps at 100 per call.
 export const BLUESKY_LIMIT_PER_GAME = 100;
 
-// Delay between per-game queries, ms. Public AppView allows ~3000 req/5min/IP.
-export const BLUESKY_QUERY_DELAY_MS = 250;
+// Delay between per-game queries, ms. From Railway's IP range the AppView
+// starts 403'ing after ~10 calls in quick succession (sliding window). 750ms
+// keeps a 30-game cycle under 25s and stays comfortably under the throttle.
+export const BLUESKY_QUERY_DELAY_MS = 750;
 
 // How early before tipoff a post counts as "about this game".
 export const BLUESKY_SINCE_OFFSET_MS = 30 * 60 * 1000; // 30 min
