@@ -186,6 +186,13 @@ export const BLUESKY_QUERY_DELAY_MS = 750;
 // How early before tipoff a post counts as "about this game".
 export const BLUESKY_SINCE_OFFSET_MS = 30 * 60 * 1000; // 30 min
 
+// Bluesky auth — when both vars are set, requests go through with a session
+// JWT (much higher rate limits, dodges the unauth WAF rules that were 403'ing
+// specific queries from Railway IPs). When unset, falls back to anonymous
+// requests so local dev still works without creds.
+export const BLUESKY_HANDLE = process.env.BLUESKY_HANDLE || null;
+export const BLUESKY_APP_PASSWORD = process.env.BLUESKY_APP_PASSWORD || null;
+
 // Engagement baselines for the 0-100 chatter scale. Single global set (not
 // per-sport) so popularity bias flows through: an NBA finals naturally hits
 // the ceiling, a Tuesday MLS game lands in the 5-15 range. Tune these once

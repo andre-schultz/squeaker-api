@@ -17,6 +17,7 @@ import {
   CHATTER_BASELINES,
 } from '../config.js';
 import { calcChatter } from './algorithm.js';
+import { getAccessJwt, refreshAccessJwt, authConfigured } from './bsky-auth.js';
 
 // Note: app.bsky.feed.searchPosts is blocked behind a CDN 403 on
 // public.api.bsky.app (anti-scraping), but the same AppView serves it without
@@ -55,12 +56,19 @@ async function searchPosts(game) {
     `&sort=latest` +
     `&since=${encodeURIComponent(sinceIso)}`;
 
-  let res;
-  try {
-    res = await fetch(url, { headers: HEADERS });
-  } catch (e) {
-    console.error(`[bluesky] fetch error (${q}): ${e.message}`);
-    return [];
+  let res = await sendSearchRequest(url, await getAccessJwt(), q);
+  if (!res) return [];
+
+  // 401 on an authenticated request means our token expired or was revoked.
+  // Refresh once and retry; if refresh also fails, getAccessJwt returns null
+  // and we fall back to anonymous which is still better than nothing.
+  if (res.status === 401 && authConfigured()) {
+    await drain(res);
+    const newJwt = await refreshAccessJwt();
+    if (newJwt) {
+      res = await sendSearchRequest(url, newJwt, q);
+      if (!res) return [];
+    }
   }
 
   if (res.status === 429) {
@@ -69,8 +77,6 @@ async function searchPosts(game) {
     return [];
   }
   if (!res.ok) {
-    // Log a snippet of the body so we can tell apart CDN blocks (HTML),
-    // AT-Proto error envelopes ({error, message}), and other failures.
     let snippet = '';
     try {
       const body = await res.text();
@@ -96,6 +102,21 @@ async function searchPosts(game) {
   }
   data = null;
   return out;
+}
+
+// Single fetch attempt with optional bearer auth. Returns the Response on
+// any HTTP outcome, or null on network error (caller treats null as "skip
+// this game this cycle"). Auth header is omitted when jwt is null so the
+// unauth fallback path stays exactly like the original anonymous request.
+async function sendSearchRequest(url, jwt, q) {
+  const headers = { ...HEADERS };
+  if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+  try {
+    return await fetch(url, { headers });
+  } catch (e) {
+    console.error(`[bluesky] fetch error (${q}): ${e.message}`);
+    return null;
+  }
 }
 
 async function drain(res) {
