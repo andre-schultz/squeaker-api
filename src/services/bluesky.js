@@ -53,7 +53,7 @@ async function searchPosts(game) {
     `${APPVIEW}/app.bsky.feed.searchPosts` +
     `?q=${encodeURIComponent(q)}` +
     `&limit=${BLUESKY_LIMIT_PER_GAME}` +
-    `&sort=latest` +
+    `&sort=top` +
     `&since=${encodeURIComponent(sinceIso)}`;
 
   let res = await sendSearchRequest(url, await getAccessJwt(), q);

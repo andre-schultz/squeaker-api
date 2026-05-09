@@ -68,31 +68,53 @@ export const SPORTS = {
 // ── Excitement language ───────────────────────────────────────────────────────
 // Researched from real game threads (LAFC vs SDFC, MLS May 2026, etc.)
 export const EXCITEMENT_WORDS = [
+  // Emojis — highest signal, cheapest match
+  '🔥', '😱', '🤯', '💀', '😤', '🏆', '⚡', '🚀', '🙌', '👏', '🫡', '🥹',
+
   // Classic hype
   'insane', 'unbelievable', 'clutch', 'legendary', 'crazy', 'incredible',
   'amazing', 'omg', 'wow', 'wild', 'nuts', 'epic', 'hype', 'electric',
-  'fire', 'unreal', 'screaming', 'goat',
+  'fire', 'unreal', 'screaming', 'goat', 'banger', 'nasty', 'filthy',
+
+  // Casual internet
+  "let's go", 'lets go', 'lfg', 'wtf', 'holy shit', 'oh shit',
+  'no way', 'no shot', 'bro', 'dude', 'sheesh', 'damn',
 
   // Game situation language
   'what a game', 'at the death', 'stoppage time', 'injury time',
   'dramatic', 'comeback', 'scenes', 'stunner', 'oh my god',
   'hold on', 'game on', 'levels it', 'equalizer', 'ties it',
-  'last minute', 'late goal', 'buzzer', 'walk off', 'walk-off',
-  'overtime', 'sudden death', 'penalty', 'shootout',
+  'last minute', 'late goal', 'buzzer', 'buzzer beater', 'buzzer-beater',
+  'walk off', 'walk-off', 'walkoff', 'overtime', 'sudden death',
+  'penalty', 'shootout', 'game winner', 'game-winner',
+  'hat trick', 'hat-trick', 'grand slam', 'sweep', 'upset',
+  'dagger', 'series', 'elimination',
 
   // Reaction language
   'crumbling', 'roaring back', 'turnaround', 'buries it',
-  'can you believe', 'unreal drama', 'absolute scenes',
-  'i cant', "i can't", 'no way', 'are you kidding',
-  'what just happened', 'holy', 'insane finish', 'crazy end',
+  'unreal drama', 'absolute scenes',
+  'i cant', "i can't", 'are you kidding',
+  'holy', 'insane finish', 'crazy end',
   'pulling level', 'fight back', 'never give up',
+  'what a play', 'what a shot', 'what a run',
 ];
 
 export const BORING_WORDS = [
-  'boring', 'blowout', 'unwatchable', 'garbage', 'terrible', 'awful',
+  // Emojis
+  '😴', '🥱',
+
+  // Direct complaints
+  'boring', 'unwatchable', 'garbage', 'terrible', 'awful',
   'disappointing', 'lopsided', 'snooze', 'trash', 'pathetic',
-  'nothing game', 'dead rubber', 'no contest', 'walk in the park',
+  'meh', 'predictable', 'embarrassing', 'disgraceful',
+
+  // Game situation
+  'blowout', 'nothing game', 'dead rubber', 'no contest',
+  'walk in the park', 'one-sided', 'not competitive',
+
+  // Viewer behavior
   'waste of time', 'gave up', 'stopped watching', 'turned it off',
+  'changed the channel', 'who cares', 'tuned out',
 ];
 
 // ── Cache TTLs (seconds) ──────────────────────────────────────────────────────
@@ -195,11 +217,13 @@ export const BLUESKY_APP_PASSWORD = process.env.BLUESKY_APP_PASSWORD || null;
 
 // Engagement baselines for the 0-100 chatter scale. Single global set (not
 // per-sport) so popularity bias flows through: an NBA finals naturally hits
-// the ceiling, a Tuesday MLS game lands in the 5-15 range. Tune these once
-// real data shows where games actually cluster.
+// the ceiling, a Tuesday MLS game lands in the 5-15 range.
+// Calibrated against real data (May 2026): typical game sees 30-97 matched
+// posts, 23-319 likes, 4-76 reposts, 1-43 replies. A hot regular-season game
+// (92 posts / 319 likes / 76 reposts) scores ~79; a quiet one ~14.
 export const CHATTER_BASELINES = {
-  posts:   30,    // matched posts in a single 30-min-window snapshot
-  likes:   1500,
-  reposts: 400,
-  replies: 250,
+  posts:   100,
+  likes:   300,
+  reposts: 100,
+  replies: 60,
 };
