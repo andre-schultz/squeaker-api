@@ -195,6 +195,11 @@ function scoreBuzz(game, matches) {
 
 function countHits(text, words) {
   let n = 0;
-  for (const w of words) if (text.includes(w)) n++;
+  for (const w of words) {
+    const hit = /\p{Emoji}/u.test(w) || w.includes(' ')
+      ? text.includes(w)
+      : new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(text);
+    if (hit) n++;
+  }
   return n;
 }

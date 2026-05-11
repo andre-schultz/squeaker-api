@@ -51,6 +51,20 @@ router.get('/:id/chatter', async (req, res) => {
   }
 });
 
+// GET /api/games/:id/chatter-sample — raw post snapshot taken during a live game
+// Returns { gameLabel, sampledAt, posts: [{ text, likes, reposts, replies, bad, good }] }
+// or { posts: null } if no sample has been taken for this game.
+router.get('/:id/chatter-sample', async (req, res) => {
+  try {
+    const sample = await getCache(`chatter-sample:${req.params.id}`);
+    if (sample) return res.json(sample);
+    res.json({ posts: null });
+  } catch (e) {
+    console.error(`GET /api/games/${req.params.id}/chatter-sample error:`, e.message);
+    res.status(500).json({ error: 'Failed to fetch chatter sample' });
+  }
+});
+
 // GET /api/games/:id/articles — ESPN editorial coverage for a game
 // Returns { count, articles: [{ headline, url, type, published, image, ... }] }
 router.get('/:id/articles', async (req, res) => {

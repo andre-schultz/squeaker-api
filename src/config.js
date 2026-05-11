@@ -88,7 +88,7 @@ export const EXCITEMENT_WORDS = [
   'walk off', 'walk-off', 'walkoff', 'overtime', 'sudden death',
   'penalty', 'shootout', 'game winner', 'game-winner',
   'hat trick', 'hat-trick', 'grand slam', 'sweep', 'upset',
-  'dagger', 'series', 'elimination',
+  'dagger',
 
   // Reaction language
   'crumbling', 'roaring back', 'turnaround', 'buries it',
@@ -115,6 +115,10 @@ export const BORING_WORDS = [
   // Viewer behavior
   'waste of time', 'gave up', 'stopped watching', 'turned it off',
   'changed the channel', 'who cares', 'tuned out',
+
+  // One-sided game language (verb forms and synonyms missed by 'blowout')
+  'blow out', 'blew out', 'crushed', 'dominated', 'overwhelmed',
+  'trounced', 'forgettable',
 ];
 
 // ── Cache TTLs (seconds) ──────────────────────────────────────────────────────

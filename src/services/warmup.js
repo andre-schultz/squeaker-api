@@ -166,8 +166,25 @@ async function runChatterCycle() {
     let matched = 0;
     let newPeaks = 0;
     for (const game of candidates) {
-      const current = await chatterForGame(game);
+      // 1% chance to snapshot raw posts for a live game, at most once per game.
+      const takeSample = game.live
+        && Math.random() < 0.01
+        && !(await getCache(`chatter-sample:${game.id}`));
+
+      const current = await chatterForGame(game, { includeSample: takeSample });
       if (current) matched++;
+
+      if (takeSample && current?.sample) {
+        const samplePosts = current.sample;
+        delete current.sample;
+        await setCache(`chatter-sample:${game.id}`, {
+          gameLabel: `${game.away.name} vs ${game.home.name}`,
+          sampledAt: new Date().toISOString(),
+          posts: samplePosts,
+        }, 30 * 24 * 3600);
+        console.log(`[chatter] saved post sample for game ${game.id}`);
+      }
+
       const { peak, replaced } = await updatePeakChatter(game, current);
       if (replaced) newPeaks++;
       await saveHistory(game, { peakChatter: peak });

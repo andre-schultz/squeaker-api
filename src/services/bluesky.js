@@ -28,12 +28,14 @@ const HEADERS = { 'User-Agent': 'Squeaker/1.0 (squeaker.app)' };
 // ── Public ────────────────────────────────────────────────────────────────────
 
 // Fetch + score in one call. Returns null if no posts match.
-export async function chatterForGame(game) {
+// Pass { includeSample: true } to get a labeled post snapshot in result.sample
+// (used by the live-game sampler in warmup.js — not stored in the peak).
+export async function chatterForGame(game, { includeSample = false } = {}) {
   const posts = await searchPosts(game);
   if (posts.length === 0) return null;
   const matches = matchGame(game, posts);
   if (matches.length === 0) return null;
-  return scoreChatter(matches);
+  return scoreChatter(matches, { includeSample });
 }
 
 // ── Internals ─────────────────────────────────────────────────────────────────
@@ -54,6 +56,7 @@ async function searchPosts(game) {
     `?q=${encodeURIComponent(q)}` +
     `&limit=${BLUESKY_LIMIT_PER_GAME}` +
     `&sort=top` +
+    `&lang=en` +
     `&since=${encodeURIComponent(sinceIso)}`;
 
   let res = await sendSearchRequest(url, await getAccessJwt(), q);
@@ -170,7 +173,7 @@ function matchGame(game, posts) {
 
 // ── Scoring ───────────────────────────────────────────────────────────────────
 
-function scoreChatter(matches) {
+function scoreChatter(matches, { includeSample = false } = {}) {
   // Bucket each post by sentiment hits in its body. A post can be in BOTH
   // good and bad if it contains terms from both lists — e.g. "blowout but
   // what a finish". That's intentional: it represents mixed reactions and
@@ -192,7 +195,7 @@ function scoreChatter(matches) {
   const goodChatter = calcChatter(good, CHATTER_BASELINES);
   const badChatter  = calcChatter(bad,  CHATTER_BASELINES);
 
-  return {
+  const result = {
     chatter,
     goodChatter,
     badChatter,
@@ -203,6 +206,24 @@ function scoreChatter(matches) {
     reposts:      all.reposts,
     replies:      all.replies,
   };
+
+  if (includeSample) {
+    const goodSet = new Set(goodPosts);
+    const badSet  = new Set(badPosts);
+    result.sample = [...matches]
+      .sort((a, b) => (b.likes + b.reposts + b.replies) - (a.likes + a.reposts + a.replies))
+      .map(p => ({
+        text:      p.text,
+        likes:     p.likes,
+        reposts:   p.reposts,
+        replies:   p.replies,
+        indexedAt: p.indexedAt,
+        bad:       badSet.has(p)  ? getHits(p.textLower, BORING_WORDS)     : [],
+        good:      goodSet.has(p) ? getHits(p.textLower, EXCITEMENT_WORDS) : [],
+      }));
+  }
+
+  return result;
 }
 
 function aggregate(posts) {
@@ -215,9 +236,25 @@ function aggregate(posts) {
   return { posts: posts.length, likes, reposts, replies };
 }
 
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Use word-boundary matching for single words so "bro" doesn't match "broke",
+// "series" doesn't match "serious", etc. Phrases (spaces) and emoji use plain
+// substring matching since they're specific enough already.
+function wordMatch(text, w) {
+  if (/\p{Emoji}/u.test(w) || w.includes(' ')) return text.includes(w);
+  return new RegExp(`\\b${escapeRegex(w)}\\b`).test(text);
+}
+
 function anyHit(text, words) {
-  for (const w of words) if (text.includes(w)) return true;
+  for (const w of words) if (wordMatch(text, w)) return true;
   return false;
+}
+
+function getHits(text, words) {
+  return words.filter(w => wordMatch(text, w));
 }
 
 function lastWord(s) {
