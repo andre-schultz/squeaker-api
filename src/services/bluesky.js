@@ -143,8 +143,6 @@ function normalizePost(p) {
 // ── Matching ──────────────────────────────────────────────────────────────────
 
 function matchGame(game, posts) {
-  // Mirror reddit.js matching: full name OR last-word OR abbreviation,
-  // require both teams in the post text.
   const homeFull = (game.home.fullName || game.home.name).toLowerCase();
   const awayFull = (game.away.fullName || game.away.name).toLowerCase();
   const homeAbbr = (game.home.abbr || '').toLowerCase();

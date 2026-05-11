@@ -25,18 +25,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/games/:id/buzz — always served from cache
-router.get('/:id/buzz', async (req, res) => {
-  try {
-    const buzz = await getCache(`buzz:${req.params.id}`);
-    if (buzz) return res.json(buzz);
-    res.json({ buzz: null });
-  } catch (e) {
-    console.error(`GET /api/games/${req.params.id}/buzz error:`, e.message);
-    res.status(500).json({ error: 'Failed to fetch buzz' });
-  }
-});
-
 // GET /api/games/:id/chatter — Bluesky chatter peak (sticky high-water mark)
 // Returns { chatter, goodChatter, badChatter, matchedPosts, ... } or
 // { chatter: null } if no chatter has been recorded for this game.

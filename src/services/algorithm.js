@@ -98,39 +98,6 @@ export function detectComeback(halfHome, halfAway, finalMargin, sport) {
   return (halfMargin - finalMargin) >= sport.margins.good;
 }
 
-// ── Buzz Score (0-100) ───────────────────────────────────────────────────────
-// Live game:     velocity 40% + sentiment 60%
-// Finished game: sentiment 100%  (velocity noise fades, language stays rich)
-// Normalized against sport baseline so MLS isn't unfairly vs NBA
-
-export function calcBuzz({ comments, upvotes, velocity, sentiment, isLive }, sport) {
-  const base = sport.base;
-
-  // Normalize each signal 0-100 against sport baseline
-  const commentScore  = normalize(comments,  base.comments);
-  const upvoteScore   = normalize(upvotes,   base.upvotes);
-  const velocityScore = normalize(velocity,  base.velocity);
-
-  // sentiment arrives as 0-100 from reddit service
-
-  if (isLive) {
-    // Live: weight velocity heavily, sentiment matters
-    return Math.round(
-      velocityScore * 0.40 +
-      sentiment     * 0.35 +
-      commentScore  * 0.15 +
-      upvoteScore   * 0.10
-    );
-  } else {
-    // Finished: pure sentiment + volume, velocity ignored
-    return Math.round(
-      sentiment    * 0.50 +
-      commentScore * 0.30 +
-      upvoteScore  * 0.20
-    );
-  }
-}
-
 function normalize(value, baseline) {
   return Math.min(100, Math.round((value / baseline) * 100));
 }

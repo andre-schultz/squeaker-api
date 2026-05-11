@@ -3,63 +3,54 @@ export const SPORTS = {
   nba: {
     name: 'NBA', emoji: '🏀',
     espnSport: 'basketball', espnLeague: 'nba',
-    sub: 'nba',
     margins: { great: 3, good: 8, ok: 15, blowout: 25 },
     base: { comments: 3000, upvotes: 500, velocity: 500 },
   },
   nhl: {
     name: 'NHL', emoji: '🏒',
     espnSport: 'hockey', espnLeague: 'nhl',
-    sub: 'hockey',
     margins: { great: 1, good: 2, ok: 3, blowout: 5 },
     base: { comments: 800, upvotes: 200, velocity: 150 },
   },
   mlb: {
     name: 'MLB', emoji: '⚾',
     espnSport: 'baseball', espnLeague: 'mlb',
-    sub: 'baseball',
     margins: { great: 1, good: 2, ok: 4, blowout: 7 },
     base: { comments: 800, upvotes: 200, velocity: 150 },
   },
   nfl: {
     name: 'NFL', emoji: '🏈',
     espnSport: 'football', espnLeague: 'nfl',
-    sub: 'nfl',
     margins: { great: 3, good: 7, ok: 14, blowout: 24 },
     base: { comments: 5000, upvotes: 800, velocity: 800 },
   },
   cfb: {
     name: 'College FB', emoji: '🏈',
     espnSport: 'football', espnLeague: 'college-football',
-    sub: 'CFB',
     margins: { great: 3, good: 7, ok: 14, blowout: 24 },
     base: { comments: 2000, upvotes: 400, velocity: 300 },
   },
   cbb: {
     name: 'College BB', emoji: '🏀',
     espnSport: 'basketball', espnLeague: 'mens-college-basketball',
-    sub: 'CollegeBasketball',
     margins: { great: 3, good: 8, ok: 15, blowout: 25 },
     base: { comments: 400, upvotes: 100, velocity: 80 },
   },
   mls: {
     name: 'MLS', emoji: '⚽',
     espnSport: 'soccer', espnLeague: 'usa.1',
-    sub: 'MLS',
     margins: { great: 1, good: 2, ok: 3, blowout: 4 },
     base: { comments: 300, upvotes: 80, velocity: 60 },
   },
   epl: {
     name: 'EPL', emoji: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
     espnSport: 'soccer', espnLeague: 'eng.1',
-    sub: 'soccer',
     margins: { great: 1, good: 2, ok: 3, blowout: 4 },
     base: { comments: 1500, upvotes: 400, velocity: 300 },
   },
   ucl: {
     name: 'Champions League', emoji: '⭐',
     espnSport: 'soccer', espnLeague: 'uefa.champions',
-    sub: 'soccer',
     margins: { great: 1, good: 2, ok: 3, blowout: 4 },
     base: { comments: 2000, upvotes: 500, velocity: 400 },
   },
@@ -121,7 +112,6 @@ export const BORING_WORDS = [
 export const CACHE_TTL = {
   liveGames:     180,    // 3 min — live games
   finishedGames: 600,    // 10 min — finished games
-  buzzPeak:      432000, // 5 days — peak buzz, refreshed each time it climbs
   chatterPeak:   432000, // 5 days — peak Bluesky chatter, sticky high-water mark
   articles:      3600,   // 1 hour — finished games' editorial coverage
   articlesLive:  600,    // 10 min — live games refresh more often
@@ -153,12 +143,6 @@ function isTruthy(v) {
   return ['true', '1', 'yes', 'on', 'y'].includes(String(v).toLowerCase().trim());
 }
 
-// Reddit polling is disabled by default until OAuth is wired up — Reddit's
-// unauthenticated API returns 403 from cloud-provider IPs (Railway, AWS, etc).
-// Set REDDIT_ENABLED=true in the Railway env once OAuth credentials are in
-// place to re-enable the buzz cycle without a code change.
-export const REDDIT_ENABLED = isTruthy(process.env.REDDIT_ENABLED);
-
 // Algorithm audit logging — captures every signal the score depends on plus
 // the per-bonus breakdown of the final excitement score. Off by default to
 // keep DB writes minimal; flip on when actively tuning weights.
@@ -166,26 +150,6 @@ export const AUDIT_ENABLED = isTruthy(process.env.AUDIT_ENABLED);
 
 // ── Time window ───────────────────────────────────────────────────────────────
 export const HOURS_WINDOW = 120; // show games from last 5 days
-
-// ── Reddit polling ────────────────────────────────────────────────────────────
-// Subreddits we poll in bulk. Each cycle we hit hot.json once per sub and
-// match the returned posts to ongoing games — no per-game searches.
-// Covers general sports buzz + the per-league subs used in SPORTS above.
-export const REDDIT_SUBS = [
-  'sports',            // cross-sport general buzz
-  'sportsbook',        // line-movement chatter, often game-specific
-  'nba',
-  'nfl',
-  'baseball',          // MLB
-  'hockey',            // NHL
-  'CFB',               // college football
-  'CollegeBasketball', // college basketball
-  'MLS',
-  'soccer',            // EPL/UCL chatter lives here
-];
-
-// How many posts to pull per subreddit per cycle (Reddit caps at 100).
-export const REDDIT_POSTS_PER_SUB = 100;
 
 // ── Bluesky chatter ───────────────────────────────────────────────────────────
 // Per-game queries against the public AppView's searchPosts endpoint. Each

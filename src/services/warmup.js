@@ -1,23 +1,19 @@
-// Background scheduling for game + buzz refresh.
+// Background scheduling for game, chatter, and article refresh.
 //
 // Memory-leak fixes vs previous model:
 //  • Single setInterval ticking every minute, work gated by elapsed time.
 //    No recursive setTimeout closures — each tick is a fresh stack frame.
-//  • Concurrency guards prevent overlapping cycles (two buzz cycles running
-//    at once would double allocations).
-//  • Buzz cycle reuses cached games rather than re-fetching ESPN.
-//  • All HTTP responses are drained inside reddit.js / espn.js even on
+//  • Concurrency guards prevent overlapping cycles.
+//  • All HTTP responses are drained inside espn.js / bluesky.js even on
 //    error paths so undici sockets get released promptly.
 
 import { fetchAllGames } from './espn.js';
-import { fetchAllPosts, buzzForGame } from './reddit.js';
 import { chatterForGame } from './bluesky.js';
 import { authConfigured } from './bsky-auth.js';
 import { fetchAllArticles, articlesForGame, updateGameArticles } from './articles.js';
 import { setCache, getCache } from './cache.js';
 import {
   CACHE_TTL,
-  REDDIT_ENABLED,
   AUDIT_ENABLED,
   BLUESKY_ENABLED,
   BLUESKY_HANDLE,
@@ -25,7 +21,6 @@ import {
 } from '../config.js';
 
 const GAME_REFRESH_MS = 3 * 60 * 1000;     // 3 min, active hours
-const BUZZ_REFRESH_MS = 5 * 60 * 1000;     // 5 min, active hours
 const CHATTER_REFRESH_MS = 5 * 60 * 1000;  // 5 min, active hours
 const ARTICLE_REFRESH_MS = 10 * 60 * 1000; // 10 min — articles update slowly
 const OFF_REFRESH_MS = 10 * 60 * 1000;     // 10 min, off hours
@@ -64,77 +59,6 @@ async function runGameCycle() {
   } finally {
     gameRunning = false;
   }
-}
-
-// ── Buzz cycle (poll subreddits, match to games, update peak buzz) ────────────
-
-let buzzRunning = false;
-
-async function runBuzzCycle() {
-  if (buzzRunning) return;
-  buzzRunning = true;
-  const t0 = Date.now();
-  try {
-    const games = (await getCache('games:all')) || [];
-    if (games.length === 0) {
-      console.log('[buzz] games:all empty, skipping cycle');
-      return;
-    }
-
-    const posts = await fetchAllPosts();
-    console.log(`[buzz] pool: ${posts.length} posts across ${new Set(posts.map((p) => p.subreddit)).size} subs`);
-
-    const candidates = games.filter((g) => {
-      const ageHrs = (Date.now() - new Date(g.date).getTime()) / 3600000;
-      return ageHrs <= 36;
-    });
-
-    let matched = 0;
-    let newPeaks = 0;
-    for (const game of candidates) {
-      const current = buzzForGame(game, posts);
-      if (current) matched++;
-      const { peak, replaced } = await updatePeakBuzz(game, current);
-      if (replaced) newPeaks++;
-      await saveHistory(game, { peakBuzz: peak });
-    }
-
-    console.log(
-      `[buzz] cycle: ${candidates.length} games, ${matched} matched, ${newPeaks} new peaks (${Date.now() - t0}ms)`
-    );
-  } catch (e) {
-    console.error('[buzz] cycle failed:', e.message);
-  } finally {
-    buzzRunning = false;
-  }
-}
-
-// Keep the highest buzz value we've ever observed for a game.
-// Returns { peak: <stored value>, replaced: bool }.
-async function updatePeakBuzz(game, current) {
-  const key = `buzz:${game.id}`;
-  const prev = await getCache(key);
-
-  if (!current) {
-    // Nothing fresh to record — return existing peak unchanged.
-    return { peak: prev || null, replaced: false };
-  }
-
-  const prevBuzz = prev?.buzz ?? -1;
-  if (current.buzz > prevBuzz) {
-    const peak = {
-      ...current,
-      recordedAt: new Date().toISOString(),
-      wasLive: game.live,
-    };
-    await setCache(key, peak, CACHE_TTL.buzzPeak);
-    return { peak, replaced: true };
-  }
-
-  // Current is lower than peak — keep the peak, but extend its TTL so it
-  // doesn't expire out from under an active game.
-  await setCache(key, prev, CACHE_TTL.buzzPeak);
-  return { peak: prev, replaced: false };
 }
 
 // ── Chatter cycle (per-game Bluesky search → sticky peak chatter) ─────────────
@@ -216,7 +140,7 @@ async function updatePeakChatter(game, current) {
 // and the other overlays its fields. Buzz fields are namespaced under
 // peakBuzz/peakGood/etc.; chatter fields under peakChatter/etc. so the two
 // signals stay distinguishable in the audit data.
-async function saveHistory(game, { peakBuzz, peakChatter } = {}) {
+async function saveHistory(game, { peakChatter } = {}) {
   if (!game.done) return;
   const date = new Date(game.date).toISOString().slice(0, 10);
   const key = `history:${date}:${game.id}`;
@@ -240,17 +164,6 @@ async function saveHistory(game, { peakBuzz, peakChatter } = {}) {
     momentumSignals: game.momentumSignals ?? [],
   };
 
-  const buzzFields = peakBuzz ? {
-    peakBuzz:      peakBuzz.buzz ?? null,
-    peakGoodBuzz:  peakBuzz.goodBuzz ?? null,
-    peakBadBuzz:   peakBuzz.badBuzz ?? null,
-    peakSentiment: peakBuzz.sentiment ?? null,
-    peakComments:  peakBuzz.comments ?? null,
-    peakVelocity:  peakBuzz.velocity ?? null,
-    matchedPosts:  peakBuzz.matchedPosts ?? null,
-    redditThread:  peakBuzz.threadUrl ?? null,
-  } : {};
-
   const chatterFields = peakChatter ? {
     peakChatter:         peakChatter.chatter ?? null,
     peakGoodChatter:     peakChatter.goodChatter ?? null,
@@ -265,7 +178,6 @@ async function saveHistory(game, { peakBuzz, peakChatter } = {}) {
 
   const row = {
     ...base,
-    ...buzzFields,
     ...chatterFields,
     savedAt: new Date().toISOString(),
   };
@@ -312,13 +224,11 @@ async function runArticleCycle() {
 // ── Tick loop ─────────────────────────────────────────────────────────────────
 
 let lastGameRun = 0;
-let lastBuzzRun = 0;
 let lastChatterRun = 0;
 let lastArticleRun = 0;
 
 function tick() {
   const gameInterval    = isOffHours() ? OFF_REFRESH_MS : GAME_REFRESH_MS;
-  const buzzInterval    = isOffHours() ? OFF_REFRESH_MS : BUZZ_REFRESH_MS;
   const chatterInterval = isOffHours() ? OFF_REFRESH_MS : CHATTER_REFRESH_MS;
   const articleInterval = isOffHours() ? OFF_REFRESH_MS : ARTICLE_REFRESH_MS;
   const now = Date.now();
@@ -326,10 +236,6 @@ function tick() {
   if (now - lastGameRun >= gameInterval) {
     lastGameRun = now;
     runGameCycle();
-  }
-  if (REDDIT_ENABLED && now - lastBuzzRun >= buzzInterval) {
-    lastBuzzRun = now;
-    runBuzzCycle();
   }
   if (BLUESKY_ENABLED && now - lastChatterRun >= chatterInterval) {
     lastChatterRun = now;
@@ -344,18 +250,12 @@ function tick() {
 export async function warmCache() {
   console.log(
     `[warmup] initial warm… ` +
-    `REDDIT_ENABLED=${REDDIT_ENABLED} (raw=${JSON.stringify(process.env.REDDIT_ENABLED)}) ` +
     `BLUESKY_ENABLED=${BLUESKY_ENABLED} (raw=${JSON.stringify(process.env.BLUESKY_ENABLED)}) ` +
     `BLUESKY_AUTH=${authConfigured() ? `configured(${BLUESKY_HANDLE})` : 'unset'} ` +
     `(handle_raw=${JSON.stringify(process.env.BLUESKY_HANDLE)} pw_set=${process.env.BLUESKY_APP_PASSWORD ? 'yes' : 'no'}) ` +
     `AUDIT_ENABLED=${AUDIT_ENABLED} (raw=${JSON.stringify(process.env.AUDIT_ENABLED)})`
   );
   await runGameCycle();
-  if (REDDIT_ENABLED) {
-    await runBuzzCycle();
-  } else {
-    console.log('[buzz] disabled (REDDIT_ENABLED != true) — skipping');
-  }
   if (BLUESKY_ENABLED) {
     await runChatterCycle();
   } else {
