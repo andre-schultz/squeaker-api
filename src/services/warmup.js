@@ -166,9 +166,9 @@ async function runChatterCycle() {
     let matched = 0;
     let newPeaks = 0;
     for (const game of candidates) {
-      // 1% chance to snapshot raw posts for a live game, at most once per game.
+      // 5% chance to snapshot raw posts for a live game, at most once per game.
       const takeSample = game.live
-        && Math.random() < 0.01
+        && Math.random() < 0.05
         && !(await getCache(`chatter-sample:${game.id}`));
 
       const current = await chatterForGame(game, { includeSample: takeSample });
