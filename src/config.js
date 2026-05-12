@@ -219,15 +219,3 @@ export const BLUESKY_SINCE_OFFSET_MS = 30 * 60 * 1000; // 30 min
 export const BLUESKY_HANDLE = process.env.BLUESKY_HANDLE || null;
 export const BLUESKY_APP_PASSWORD = process.env.BLUESKY_APP_PASSWORD || null;
 
-// Engagement baselines for the 0-100 chatter scale. Single global set (not
-// per-sport) so popularity bias flows through: an NBA finals naturally hits
-// the ceiling, a Tuesday MLS game lands in the 5-15 range.
-// Calibrated against real data (May 2026): typical game sees 30-97 matched
-// posts, 23-319 likes, 4-76 reposts, 1-43 replies. A hot regular-season game
-// (92 posts / 319 likes / 76 reposts) scores ~79; a quiet one ~14.
-export const CHATTER_BASELINES = {
-  posts:   100,
-  likes:   300,
-  reposts: 100,
-  replies: 60,
-};

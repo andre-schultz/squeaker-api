@@ -34,6 +34,15 @@ const HISTORY_TTL = 30 * 24 * 60 * 60;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Mean of the n lowest values in arr. Falls back to fewer values if arr is
+// shorter than n, so the first 1-2 readings still produce a usable floor.
+function meanLowest(arr, n) {
+  if (arr.length === 0) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const take = sorted.slice(0, Math.min(n, sorted.length));
+  return take.reduce((s, v) => s + v, 0) / take.length;
+}
+
 // ── Off-hours throttle ────────────────────────────────────────────────────────
 
 function isOffHours() {
@@ -171,7 +180,16 @@ async function runChatterCycle() {
         && Math.random() < 0.05
         && !(await getCache(`chatter-sample:${game.id}`));
 
-      const current = await chatterForGame(game, { includeSample: takeSample });
+      const prevChatter = await getCache(`chatter:${game.id}`);
+      const current = await chatterForGame(game, {
+        includeSample: takeSample,
+        peakPpm:      prevChatter?.maxPpm      ?? 0,
+        peakGoodPpm:  prevChatter?.maxGoodPpm  ?? 0,
+        peakBadPpm:   prevChatter?.maxBadPpm   ?? 0,
+        floorPpm:     meanLowest(prevChatter?.ppmHistory     ?? [], 3),
+        floorGoodPpm: meanLowest(prevChatter?.goodPpmHistory ?? [], 3),
+        floorBadPpm:  meanLowest(prevChatter?.badPpmHistory  ?? [], 3),
+      });
       if (current) matched++;
 
       if (takeSample && current?.sample) {
@@ -201,6 +219,8 @@ async function runChatterCycle() {
   }
 }
 
+const PPM_HISTORY_MAX = 20; // ~100 minutes of history at 5-min cycle
+
 async function updatePeakChatter(game, current) {
   const key = `chatter:${game.id}`;
   const prev = await getCache(key);
@@ -209,6 +229,18 @@ async function updatePeakChatter(game, current) {
     return { peak: prev || null, replaced: false };
   }
 
+  // Append this cycle's readings to rolling history (used for floor next cycle).
+  const ppmHistory     = [...(prev?.ppmHistory     ?? []), current.ppm    ].slice(-PPM_HISTORY_MAX);
+  const goodPpmHistory = [...(prev?.goodPpmHistory ?? []), current.goodPpm].slice(-PPM_HISTORY_MAX);
+  const badPpmHistory  = [...(prev?.badPpmHistory  ?? []), current.badPpm ].slice(-PPM_HISTORY_MAX);
+
+  // Always advance the running peak — this is the ceiling for next cycle's score.
+  const maxPpm     = Math.max(current.ppm,     prev?.maxPpm     ?? 0);
+  const maxGoodPpm = Math.max(current.goodPpm, prev?.maxGoodPpm ?? 0);
+  const maxBadPpm  = Math.max(current.badPpm,  prev?.maxBadPpm  ?? 0);
+
+  const histFields = { ppmHistory, goodPpmHistory, badPpmHistory, maxPpm, maxGoodPpm, maxBadPpm };
+
   // Sticky peak driven by total chatter — when a new high lands, the entire
   // snapshot (good/bad/raw counts) is replaced together so the three scores
   // stay internally consistent.
@@ -216,6 +248,7 @@ async function updatePeakChatter(game, current) {
   if (current.chatter > prevChatter) {
     const peak = {
       ...current,
+      ...histFields,
       recordedAt: new Date().toISOString(),
       wasLive: game.live,
     };
@@ -223,8 +256,10 @@ async function updatePeakChatter(game, current) {
     return { peak, replaced: true };
   }
 
-  await setCache(key, prev, CACHE_TTL.chatterPeak);
-  return { peak: prev, replaced: false };
+  // Chatter didn't peak but history and max may have advanced — write back.
+  const updated = { ...prev, ...histFields };
+  await setCache(key, updated, CACHE_TTL.chatterPeak);
+  return { peak: updated, replaced: false };
 }
 
 // Per-finished-game snapshot for review/leaderboards. Called from BOTH the
@@ -272,6 +307,9 @@ async function saveHistory(game, { peakBuzz, peakChatter } = {}) {
     peakChatter:         peakChatter.chatter ?? null,
     peakGoodChatter:     peakChatter.goodChatter ?? null,
     peakBadChatter:      peakChatter.badChatter ?? null,
+    peakPpm:             peakChatter.ppm ?? null,
+    peakGoodPpm:         peakChatter.goodPpm ?? null,
+    peakBadPpm:          peakChatter.badPpm ?? null,
     chatterMatchedPosts: peakChatter.matchedPosts ?? null,
     chatterGoodPosts:    peakChatter.goodPosts ?? null,
     chatterBadPosts:     peakChatter.badPosts ?? null,

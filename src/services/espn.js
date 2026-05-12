@@ -202,6 +202,15 @@ async function parseEvent(ev, sportKey, cfg) {
     currentLiveActionBuzz,    // 0-100, real-time, 0 when not live
   };
 
+  // ── Peak chatter — embed sticky high-water Bluesky scores so clients can
+  // display them on the game card without a separate /chatter request.
+  // For live games this is the peak so far; for finished games it's the peak
+  // across the whole game.
+  const cachedChatter = BLUESKY_ENABLED ? await getCache(`chatter:${ev.id}`) : null;
+  game.peakChatter     = cachedChatter?.chatter     ?? null;
+  game.peakGoodChatter = cachedChatter?.goodChatter ?? null;
+  game.peakBadChatter  = cachedChatter?.badChatter  ?? null;
+
   // ── Audit snapshot — captures everything that affects the excitement
   // score so a stored game can be replayed and explained later.
   // No-op when AUDIT_ENABLED is false.
@@ -216,7 +225,6 @@ async function parseEvent(ev, sportKey, cfg) {
       live ? progress : 1.0, dramaBonus, upsetBonus,
     );
     const cachedBuzz = REDDIT_ENABLED ? await getCache(`buzz:${ev.id}`) : null;
-    const cachedChatter = BLUESKY_ENABLED ? await getCache(`chatter:${ev.id}`) : null;
     await recordAudit(game, {
       momentum:   { bonus: momentumBonus, signals },
       wp:         { bonus: dramaBonus, signals: wpSignals, maxSwing },

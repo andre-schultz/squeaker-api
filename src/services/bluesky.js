@@ -1,10 +1,12 @@
 // Per-game chatter from Bluesky. Each game gets its own searchPosts query
-// against the public AppView (no auth) — that way the score reflects actual
-// posts about THAT game, not a fixed pool divvied across the league. Popular
-// games legitimately outscore quiet ones.
+// against the public AppView — that way the score reflects actual posts about
+// THAT game, not a fixed pool divvied across the league. Popular games
+// legitimately outscore quiet ones.
+//
+// Uses sort=latest so timestamps are meaningful for rate calculation.
 //
 // Three independent 0-100 scores per game:
-//   chatter      — overall volume across all matched posts
+//   chatter      — posts-per-minute rate + acceleration across all matched posts
 //   goodChatter  — same metric, computed over excitement-bucketed posts
 //   badChatter   — same metric, computed over boring-bucketed posts
 // All three can be high simultaneously (passionate, mixed-reactions game).
@@ -14,9 +16,8 @@ import {
   BORING_WORDS,
   BLUESKY_LIMIT_PER_GAME,
   BLUESKY_SINCE_OFFSET_MS,
-  CHATTER_BASELINES,
 } from '../config.js';
-import { calcChatter } from './algorithm.js';
+import { calcChatterPpm } from './algorithm.js';
 import { getAccessJwt, refreshAccessJwt, authConfigured } from './bsky-auth.js';
 
 // Note: app.bsky.feed.searchPosts is blocked behind a CDN 403 on
@@ -30,12 +31,25 @@ const HEADERS = { 'User-Agent': 'Squeaker/1.0 (squeaker.app)' };
 // Fetch + score in one call. Returns null if no posts match.
 // Pass { includeSample: true } to get a labeled post snapshot in result.sample
 // (used by the live-game sampler in warmup.js — not stored in the peak).
-export async function chatterForGame(game, { includeSample = false } = {}) {
+// Pass peakPpm / floorPpm (and good/bad variants) derived from the game's own
+// ppm history so the score is self-normalizing: 100 = at peak, 0 = at floor.
+// Supplied by the caller (warmup.js) from the cached chatter object.
+export async function chatterForGame(game, {
+  includeSample = false,
+  peakPpm = 0,  floorPpm = 0,
+  peakGoodPpm = 0, floorGoodPpm = 0,
+  peakBadPpm  = 0, floorBadPpm  = 0,
+} = {}) {
   const posts = await searchPosts(game);
   if (posts.length === 0) return null;
   const matches = matchGame(game, posts);
   if (matches.length === 0) return null;
-  return scoreChatter(matches, { includeSample });
+  return scoreChatter(matches, {
+    includeSample,
+    peakPpm, floorPpm,
+    peakGoodPpm, floorGoodPpm,
+    peakBadPpm, floorBadPpm,
+  });
 }
 
 // ── Internals ─────────────────────────────────────────────────────────────────
@@ -55,7 +69,7 @@ async function searchPosts(game) {
     `${APPVIEW}/app.bsky.feed.searchPosts` +
     `?q=${encodeURIComponent(q)}` +
     `&limit=${BLUESKY_LIMIT_PER_GAME}` +
-    `&sort=top` +
+    `&sort=latest` +
     `&lang=en` +
     `&since=${encodeURIComponent(sinceIso)}`;
 
@@ -173,11 +187,14 @@ function matchGame(game, posts) {
 
 // ── Scoring ───────────────────────────────────────────────────────────────────
 
-function scoreChatter(matches, { includeSample = false } = {}) {
-  // Bucket each post by sentiment hits in its body. A post can be in BOTH
-  // good and bad if it contains terms from both lists — e.g. "blowout but
-  // what a finish". That's intentional: it represents mixed reactions and
-  // contributes to both poles.
+function scoreChatter(matches, {
+  includeSample = false,
+  peakPpm = 0,  floorPpm = 0,
+  peakGoodPpm = 0, floorGoodPpm = 0,
+  peakBadPpm  = 0, floorBadPpm  = 0,
+} = {}) {
+  // Bucket each post by sentiment. A post can land in both if it contains
+  // terms from both lists — "blowout but what a finish" contributes to both.
   const goodPosts = [];
   const badPosts  = [];
   for (const p of matches) {
@@ -187,24 +204,35 @@ function scoreChatter(matches, { includeSample = false } = {}) {
     if (hasBad)  badPosts.push(p);
   }
 
-  const all  = aggregate(matches);
-  const good = aggregate(goodPosts);
-  const bad  = aggregate(badPosts);
+  const ppm     = computePpm(matches);
+  const goodPpm = computePpm(goodPosts);
+  const badPpm  = computePpm(badPosts);
 
-  const chatter     = calcChatter(all,  CHATTER_BASELINES);
-  const goodChatter = calcChatter(good, CHATTER_BASELINES);
-  const badChatter  = calcChatter(bad,  CHATTER_BASELINES);
+  const chatter     = calcChatterPpm(ppm,     peakPpm,     floorPpm);
+  const goodChatter = calcChatterPpm(goodPpm, peakGoodPpm, floorGoodPpm);
+  const badChatter  = calcChatterPpm(badPpm,  peakBadPpm,  floorBadPpm);
+
+  // Aggregate engagement counts — kept for debug/history but not used in score.
+  let likes = 0, reposts = 0, replies = 0;
+  for (const p of matches) {
+    likes   += p.likes;
+    reposts += p.reposts;
+    replies += p.replies;
+  }
 
   const result = {
     chatter,
     goodChatter,
     badChatter,
+    ppm,
+    goodPpm,
+    badPpm,
     matchedPosts: matches.length,
     goodPosts:    goodPosts.length,
     badPosts:     badPosts.length,
-    likes:        all.likes,
-    reposts:      all.reposts,
-    replies:      all.replies,
+    likes,
+    reposts,
+    replies,
   };
 
   if (includeSample) {
@@ -226,14 +254,22 @@ function scoreChatter(matches, { includeSample = false } = {}) {
   return result;
 }
 
-function aggregate(posts) {
-  let likes = 0, reposts = 0, replies = 0;
-  for (const p of posts) {
-    likes   += p.likes;
-    reposts += p.reposts;
-    replies += p.replies;
+// Posts-per-minute rate derived from the indexedAt timestamps of the given
+// posts. With sort=latest the newest posts come first, so the oldest timestamp
+// tells us how far back this batch spans.
+// Falls back to the full since-window when no timestamps are present.
+function computePpm(posts) {
+  if (posts.length === 0) return 0;
+  const now = Date.now();
+  const stamped = posts.filter(p => p.indexedAt);
+  if (stamped.length === 0) {
+    // No timestamps — use the full search window as the denominator.
+    return posts.length / (BLUESKY_SINCE_OFFSET_MS / 60000);
   }
-  return { posts: posts.length, likes, reposts, replies };
+  const oldest = Math.min(...stamped.map(p => new Date(p.indexedAt).getTime()));
+  // Floor at 1 minute so a burst of simultaneous posts doesn't produce Infinity.
+  const spanMin = Math.max(1, (now - oldest) / 60000);
+  return posts.length / spanMin;
 }
 
 function escapeRegex(s) {

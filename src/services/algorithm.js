@@ -136,28 +136,19 @@ function normalize(value, baseline) {
 }
 
 // ── Chatter Score (0-100) ────────────────────────────────────────────────────
-// Bluesky-only. Unlike calcBuzz, baselines are universal (not per-sport) so
-// popular games legitimately outscore niche ones — a playoff NBA game should
-// dwarf a Tuesday MLS in chatter, and that's the desired behavior.
+// Bluesky-only. Min-max normalizes currentPpm against the game's own history:
+//   floor = mean of the 3 lowest ppm readings seen for this game
+//   peak  = highest ppm seen for this game
+// Score of 100 means "as busy as this game has ever been"; 0 means "at or
+// below the quiet baseline." Both anchors are derived from in-game data only.
 //
-// Used three times per game by the chatter cycle: once over all matched posts
-// (chatter), once over excitement-bucketed posts (goodChatter), once over
-// boring-bucketed posts (badChatter). Each independent 0-100.
-export function calcChatter({ posts, likes, reposts, replies }, baselines) {
-  const postsScore   = normalize(posts,   baselines.posts);
-  const likesScore   = normalize(likes,   baselines.likes);
-  const repostsScore = normalize(reposts, baselines.reposts);
-  const repliesScore = normalize(replies, baselines.replies);
-
-  // Posts and likes get the heaviest weight: post count is the truest "people
-  // are talking" signal; likes are the broadest passive engagement. Reposts
-  // and replies move slower and are noisier per-post.
-  return Math.round(
-    postsScore   * 0.30 +
-    likesScore   * 0.30 +
-    repostsScore * 0.20 +
-    repliesScore * 0.20
-  );
+// Edge cases:
+//   peak === floor (all readings identical, or first sighting): 100 if at
+//   or above peak, 0 otherwise — not enough range to interpolate.
+//   ppm < floor: clamped to 0 (below baseline).
+export function calcChatterPpm(ppm, peakPpm, floorPpm) {
+  if (peakPpm === floorPpm) return ppm >= peakPpm && peakPpm > 0 ? 100 : 0;
+  return Math.min(100, Math.max(0, Math.round((ppm - floorPpm) / (peakPpm - floorPpm) * 100)));
 }
 
 // ── Labels ───────────────────────────────────────────────────────────────────
