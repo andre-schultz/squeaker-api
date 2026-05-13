@@ -47,11 +47,11 @@ const BETTING_WINDOW_MS = 10 * 60_000;
 
 // Fetch live SGO events for the sports represented in liveGames.
 //
-// Makes one request per sport that has live games in our tracked list, so we
-// never pay objects for leagues we don't care about. A quiet NHL-only night
-// costs ~5 objects. During March Madness we do pay for all live NCAAB games,
-// but we get reliable matching — a limit would save objects but could exclude
-// our tracked games entirely since SGO's return order isn't guaranteed.
+// Makes one request per sport that has live games in our tracked list, limited
+// to exactly the count we track for that sport. Keeps object usage proportional
+// to what we actually care about — a March Madness night with 8 tracked NCAAB
+// games costs 8 objects, not 40+. Some tracked games may not match if SGO
+// returns different ones; betting score is best-effort coverage.
 //
 // Falls back to a single broad request when called without a game list (e.g.
 // during warmup before games:all is populated).
@@ -70,17 +70,20 @@ export async function fetchSGOLiveEvents(liveGames = null) {
   }
   if (Object.keys(leagueCounts).length === 0) return [];
 
-  // One request per active league — no limit so we always get every live game
-  // for that sport and matching against our tracked games is reliable.
+  // One request per active league, limited to the number of games we actually
+  // track for that sport. SGO's return order isn't guaranteed so some tracked
+  // games may not be in the response — betting score is best-effort.
   const results = await Promise.all(
-    Object.keys(leagueCounts).map(league => fetchLeague(league))
+    Object.entries(leagueCounts).map(([league, count]) => fetchLeague(league, count))
   );
   return results.flat();
 }
 
-// Single SGO /events request for one league.
-async function fetchLeague(leagueID) {
-  const url = `${BASE}/events?live=true&leagueID=${leagueID}&oddsAvailable=true`;
+// Single SGO /events request for one league. limit=null fetches all.
+async function fetchLeague(leagueID, limit = null) {
+  const params = new URLSearchParams({ live: 'true', leagueID, oddsAvailable: 'true' });
+  if (limit != null) params.set('limit', String(limit));
+  const url = `${BASE}/events?${params}`;
   let res;
   try {
     res = await fetch(url, { headers: HEADERS() });
