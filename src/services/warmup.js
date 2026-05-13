@@ -239,27 +239,46 @@ async function updatePeakChatter(game, current) {
   const maxGoodPpm = Math.max(current.goodPpm, prev?.maxGoodPpm ?? 0);
   const maxBadPpm  = Math.max(current.badPpm,  prev?.maxBadPpm  ?? 0);
 
-  const histFields = { ppmHistory, goodPpmHistory, badPpmHistory, maxPpm, maxGoodPpm, maxBadPpm };
+  // Three independent sticky peaks. The previous design bundled good/bad
+  // into a single chatter-peak snapshot: once chatter hit 100 (commonly by
+  // the 2nd cycle once history existed), the whole snapshot froze. Good/bad
+  // ppm history hadn't built up yet at that moment, so calcChatterPpm
+  // returned 0 for both — and those zeros stuck forever because no later
+  // cycle could exceed chatter=100 to trigger a replacement.
+  const next = {
+    ...(prev || {}),
+    ppmHistory, goodPpmHistory, badPpmHistory,
+    maxPpm, maxGoodPpm, maxBadPpm,
+  };
 
-  // Sticky peak driven by total chatter — when a new high lands, the entire
-  // snapshot (good/bad/raw counts) is replaced together so the three scores
-  // stay internally consistent.
-  const prevChatter = prev?.chatter ?? -1;
-  if (current.chatter > prevChatter) {
-    const peak = {
-      ...current,
-      ...histFields,
-      recordedAt: new Date().toISOString(),
-      wasLive: game.live,
-    };
-    await setCache(key, peak, CACHE_TTL.chatterPeak);
-    return { peak, replaced: true };
+  let replaced = false;
+
+  if (current.chatter > (prev?.chatter ?? -1)) {
+    next.chatter      = current.chatter;
+    next.ppm          = current.ppm;
+    next.matchedPosts = current.matchedPosts;
+    next.likes        = current.likes;
+    next.reposts      = current.reposts;
+    next.replies      = current.replies;
+    next.recordedAt   = new Date().toISOString();
+    next.wasLive      = game.live;
+    replaced = true;
+  }
+  if (current.goodChatter > (prev?.goodChatter ?? -1)) {
+    next.goodChatter = current.goodChatter;
+    next.goodPpm     = current.goodPpm;
+    next.goodPosts   = current.goodPosts;
+    replaced = true;
+  }
+  if (current.badChatter > (prev?.badChatter ?? -1)) {
+    next.badChatter = current.badChatter;
+    next.badPpm     = current.badPpm;
+    next.badPosts   = current.badPosts;
+    replaced = true;
   }
 
-  // Chatter didn't peak but history and max may have advanced — write back.
-  const updated = { ...prev, ...histFields };
-  await setCache(key, updated, CACHE_TTL.chatterPeak);
-  return { peak: updated, replaced: false };
+  await setCache(key, next, CACHE_TTL.chatterPeak);
+  return { peak: next, replaced };
 }
 
 // Per-finished-game snapshot for review/leaderboards. Called from BOTH the
