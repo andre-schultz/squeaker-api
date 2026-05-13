@@ -23,7 +23,8 @@ const HEADERS = () => ({ 'x-api-key': process.env.SGO_API_KEY, 'User-Agent': 'Sq
 const HOME_ML_ID = 'points-home-game-ml-home';
 const AWAY_ML_ID = 'points-away-game-ml-away';
 
-// SGO leagueID ↔ our sport key
+// SGO leagueID ↔ our sport key.
+// EPL is blocked on the free tier — omitted intentionally.
 const SGO_LEAGUE_TO_SPORT = {
   NHL:                  'nhl',
   NBA:                  'nba',
@@ -32,7 +33,6 @@ const SGO_LEAGUE_TO_SPORT = {
   NCAAF:                'cfb',
   NCAAB:                'cbb',
   MLS:                  'mls',
-  EPL:                  'epl',
   UEFA_CHAMPIONS_LEAGUE:'ucl',
 };
 const SPORT_TO_SGO_LEAGUE = Object.fromEntries(
