@@ -102,4 +102,17 @@ router.get('/:id/audit', async (req, res) => {
   }
 });
 
+// GET /api/games/:id/betting — live betting score derived from SGO line movement
+// Returns { current, peak, drift, velocity, openingHomeWP, currentHomeWP, ... }
+// or { current: null } when SGO has no data for this game.
+router.get('/:id/betting', async (req, res) => {
+  try {
+    const data = await getCache(`betting:${req.params.id}`);
+    res.json(data || { current: null });
+  } catch (e) {
+    console.error(`GET /api/games/${req.params.id}/betting error:`, e.message);
+    res.status(500).json({ error: 'Failed to fetch betting data' });
+  }
+});
+
 export default router;

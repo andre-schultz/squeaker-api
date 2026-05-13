@@ -14,6 +14,7 @@ import { fetchAllPosts, buzzForGame } from './reddit.js';
 import { chatterForGame } from './bluesky.js';
 import { authConfigured } from './bsky-auth.js';
 import { fetchAllArticles, articlesForGame, updateGameArticles } from './articles.js';
+import { fetchSGOLiveEvents, recordOddsSnapshot, computeBettingScore } from './sgo.js';
 import { setCache, getCache } from './cache.js';
 import {
   CACHE_TTL,
@@ -22,12 +23,14 @@ import {
   BLUESKY_ENABLED,
   BLUESKY_HANDLE,
   BLUESKY_QUERY_DELAY_MS,
+  SGO_ENABLED,
 } from '../config.js';
 
 const GAME_REFRESH_MS = 3 * 60 * 1000;     // 3 min, active hours
 const BUZZ_REFRESH_MS = 5 * 60 * 1000;     // 5 min, active hours
 const CHATTER_REFRESH_MS = 5 * 60 * 1000;  // 5 min, active hours
 const ARTICLE_REFRESH_MS = 10 * 60 * 1000; // 10 min — articles update slowly
+const ODDS_REFRESH_MS = 10 * 60 * 1000;    // 10 min — matches SGO update frequency
 const OFF_REFRESH_MS = 10 * 60 * 1000;     // 10 min, off hours
 const TICK_MS = 60 * 1000;                  // wake up once a minute
 const HISTORY_TTL = 30 * 24 * 60 * 60;
@@ -330,6 +333,75 @@ async function saveHistory(game, { peakBuzz, peakChatter } = {}) {
   }
 }
 
+// ── Odds cycle (poll SGO live lines, record WP timeline, update betting score) ─
+//
+// Only fires when SGO_ENABLED (SGO_API_KEY is set) AND at least one game is
+// currently live — this keeps object usage minimal on the free tier.
+// One SGO call fetches all live events in a single request (1 object per game
+// returned). Per-game matching is done client-side against games:all.
+
+let oddsRunning = false;
+
+async function runOddsCycle() {
+  if (oddsRunning) return;
+  oddsRunning = true;
+  const t0 = Date.now();
+  try {
+    const games    = (await getCache('games:all')) || [];
+    const liveGames = games.filter(g => g.live);
+    if (liveGames.length === 0) return; // no live games — don't burn objects
+
+    const sgoEvents = await fetchSGOLiveEvents(liveGames);
+    if (sgoEvents.length === 0) {
+      console.log('[odds] SGO returned no live events');
+      return;
+    }
+
+    let matched = 0;
+    let newPeaks = 0;
+    for (const game of liveGames) {
+      const timeline = await recordOddsSnapshot(game, sgoEvents);
+      if (!timeline) continue;
+      matched++;
+
+      const breakdown = computeBettingScore(timeline);
+      const { replaced } = await updatePeakBetting(game, breakdown);
+      if (replaced) newPeaks++;
+    }
+
+    console.log(
+      `[odds] cycle: ${liveGames.length} live, ${matched} matched, ` +
+      `${newPeaks} new peaks, ${sgoEvents.length} SGO events (${Date.now() - t0}ms)`
+    );
+  } catch (e) {
+    console.error('[odds] cycle failed:', e.message);
+  } finally {
+    oddsRunning = false;
+  }
+}
+
+// Keep the highest betting score seen during the game's live period.
+async function updatePeakBetting(game, breakdown) {
+  const key  = `betting:${game.id}`;
+  const prev = await getCache(key);
+
+  const current = {
+    current:       breakdown.score,
+    drift:         breakdown.drift,
+    velocity:      breakdown.velocity,
+    openingHomeWP: breakdown.openingHomeWP,
+    currentHomeWP: breakdown.currentHomeWP,
+    windowSamples: breakdown.windowSamples,
+    peak:          Math.max(breakdown.score, prev?.peak ?? 0),
+    recordedAt:    new Date().toISOString(),
+    wasLive:       true,
+  };
+
+  const replaced = breakdown.score > (prev?.peak ?? -1);
+  await setCache(key, current, CACHE_TTL.bettingPeak);
+  return { replaced };
+}
+
 // ── Article cycle (poll league news, match to games, store per-game) ──────────
 
 let articleRunning = false;
@@ -369,6 +441,7 @@ let lastGameRun = 0;
 let lastBuzzRun = 0;
 let lastChatterRun = 0;
 let lastArticleRun = 0;
+let lastOddsRun = 0;
 
 function tick() {
   const gameInterval    = isOffHours() ? OFF_REFRESH_MS : GAME_REFRESH_MS;
@@ -393,6 +466,10 @@ function tick() {
     lastArticleRun = now;
     runArticleCycle();
   }
+  if (SGO_ENABLED && now - lastOddsRun >= ODDS_REFRESH_MS) {
+    lastOddsRun = now;
+    runOddsCycle();
+  }
 }
 
 export async function warmCache() {
@@ -416,6 +493,11 @@ export async function warmCache() {
     console.log('[chatter] disabled (BLUESKY_ENABLED != true) — skipping');
   }
   await runArticleCycle();
+  if (SGO_ENABLED) {
+    await runOddsCycle();
+  } else {
+    console.log('[odds] disabled (SGO_API_KEY not set) — skipping');
+  }
   console.log('[warmup] initial warm complete');
 }
 

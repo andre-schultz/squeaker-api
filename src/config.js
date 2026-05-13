@@ -133,6 +133,8 @@ export const CACHE_TTL = {
   frozenOdds:     30 * 24 * 3600, // 30 days — pre-game line, fetched once
   liveActionPeak: 30 * 24 * 3600, // 30 days — peak live-action score per game
   audit:          3 * 24 * 3600,  // 3 days — algorithm audit log
+  oddsTimeline:   30 * 24 * 3600, // 30 days — SGO live-odds WP timeline
+  bettingPeak:    30 * 24 * 3600, // 30 days — peak betting score per game
 };
 
 // ── Win-probability sliding-window lengths (per sport) ────────────────────────
@@ -211,6 +213,12 @@ export const BLUESKY_QUERY_DELAY_MS = 750;
 
 // How early before tipoff a post counts as "about this game".
 export const BLUESKY_SINCE_OFFSET_MS = 30 * 60 * 1000; // 30 min
+
+// ── SportsGameOdds live odds ──────────────────────────────────────────────────
+// Enabled automatically when SGO_API_KEY is present. No separate flag needed —
+// the key being set is the opt-in. Polls live in-game moneylines every 10 min
+// (matching SGO's free-tier update frequency) for all live games.
+export const SGO_ENABLED = !!process.env.SGO_API_KEY;
 
 // Bluesky auth — when both vars are set, requests go through with a session
 // JWT (much higher rate limits, dodges the unauth WAF rules that were 403'ing
