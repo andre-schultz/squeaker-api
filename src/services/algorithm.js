@@ -135,20 +135,21 @@ function normalize(value, baseline) {
   return Math.min(100, Math.round((value / baseline) * 100));
 }
 
-// ── Chatter Score (0-100) ────────────────────────────────────────────────────
-// Bluesky-only. Min-max normalizes currentPpm against the game's own history:
-//   floor = mean of the 3 lowest ppm readings seen for this game
-//   peak  = highest ppm seen for this game
-// Score of 100 means "as busy as this game has ever been"; 0 means "at or
-// below the quiet baseline." Both anchors are derived from in-game data only.
+// ── Chatter Score ────────────────────────────────────────────────────────────
+// Bluesky-only. Measures recent fold-increase in posts-per-minute relative to
+// a rolling baseline (mean of the last 5 ppm readings, or all available if
+// fewer):
+//   score = round((currentPpm / floor) * 10)
+// So 1x → 10, 5x → 50, 10x → 100, 20x → 200. Intentionally uncapped — the DB
+// stores the raw fold-increase so a genuine viral surge is distinguishable
+// from a normal spike. Clients can clamp to 0-100 for display.
 //
-// Edge cases:
-//   peak === floor (all readings identical, or first sighting): 100 if at
-//   or above peak, 0 otherwise — not enough range to interpolate.
-//   ppm < floor: clamped to 0 (below baseline).
-export function calcChatterPpm(ppm, peakPpm, floorPpm) {
-  if (peakPpm === floorPpm) return ppm >= peakPpm && peakPpm > 0 ? 100 : 0;
-  return Math.min(100, Math.max(0, Math.round((ppm - floorPpm) / (peakPpm - floorPpm) * 100)));
+// Edge case: floor === 0 (no history yet, or 5 cycles of dead silence) →
+// score 0. A genuine burst out of a dry spell registers next cycle once it's
+// in history; keeps the score honest when there's no baseline to compare to.
+export function calcChatterPpm(ppm, floor) {
+  if (floor === 0) return 0;
+  return Math.round((ppm / floor) * 10);
 }
 
 // ── Labels ───────────────────────────────────────────────────────────────────
