@@ -34,13 +34,13 @@ const HISTORY_TTL = 30 * 24 * 60 * 60;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Mean of the n lowest values in arr. Falls back to fewer values if arr is
-// shorter than n, so the first 1-2 readings still produce a usable floor.
-function meanLowest(arr, n) {
+// Mean of the n most-recent values in arr. Falls back to fewer values if
+// arr is shorter than n. Used as the chatter-score baseline so the score
+// reflects how much ppm has picked up vs the last few cycles.
+function meanRecent(arr, n) {
   if (arr.length === 0) return 0;
-  const sorted = [...arr].sort((a, b) => a - b);
-  const take = sorted.slice(0, Math.min(n, sorted.length));
-  return take.reduce((s, v) => s + v, 0) / take.length;
+  const recent = arr.slice(-n);
+  return recent.reduce((s, v) => s + v, 0) / recent.length;
 }
 
 // ── Off-hours throttle ────────────────────────────────────────────────────────
@@ -151,8 +151,10 @@ async function updatePeakBuzz(game, current) {
 // Unlike the buzz cycle, this does N HTTP requests per cycle (one per
 // candidate game), spaced by BLUESKY_QUERY_DELAY_MS to stay under the public
 // AppView's ~3000 req/5min/IP budget. Each game gets three independent
-// 0-100 scores: chatter, goodChatter, badChatter. Sticky peak per score
-// triple — we keep the snapshot whose `chatter` is the highest seen so far.
+// 0-100 scores: chatter, goodChatter, badChatter. Each score is the
+// fold-increase of its ppm over the mean of the last 5 cycles, * 10
+// (10x → 100). The cached peak holds the running max for each score along
+// with the ppm-history needed to compute the next cycle's baselines.
 
 let chatterRunning = false;
 
@@ -183,12 +185,9 @@ async function runChatterCycle() {
       const prevChatter = await getCache(`chatter:${game.id}`);
       const current = await chatterForGame(game, {
         includeSample: takeSample,
-        peakPpm:      prevChatter?.maxPpm      ?? 0,
-        peakGoodPpm:  prevChatter?.maxGoodPpm  ?? 0,
-        peakBadPpm:   prevChatter?.maxBadPpm   ?? 0,
-        floorPpm:     meanLowest(prevChatter?.ppmHistory     ?? [], 3),
-        floorGoodPpm: meanLowest(prevChatter?.goodPpmHistory ?? [], 3),
-        floorBadPpm:  meanLowest(prevChatter?.badPpmHistory  ?? [], 3),
+        floorPpm:     meanRecent(prevChatter?.ppmHistory     ?? [], 5),
+        floorGoodPpm: meanRecent(prevChatter?.goodPpmHistory ?? [], 5),
+        floorBadPpm:  meanRecent(prevChatter?.badPpmHistory  ?? [], 5),
       });
       if (current) matched++;
 
@@ -234,21 +233,12 @@ async function updatePeakChatter(game, current) {
   const goodPpmHistory = [...(prev?.goodPpmHistory ?? []), current.goodPpm].slice(-PPM_HISTORY_MAX);
   const badPpmHistory  = [...(prev?.badPpmHistory  ?? []), current.badPpm ].slice(-PPM_HISTORY_MAX);
 
-  // Always advance the running peak — this is the ceiling for next cycle's score.
-  const maxPpm     = Math.max(current.ppm,     prev?.maxPpm     ?? 0);
-  const maxGoodPpm = Math.max(current.goodPpm, prev?.maxGoodPpm ?? 0);
-  const maxBadPpm  = Math.max(current.badPpm,  prev?.maxBadPpm  ?? 0);
-
-  // Three independent sticky peaks. The previous design bundled good/bad
-  // into a single chatter-peak snapshot: once chatter hit 100 (commonly by
-  // the 2nd cycle once history existed), the whole snapshot froze. Good/bad
-  // ppm history hadn't built up yet at that moment, so calcChatterPpm
-  // returned 0 for both — and those zeros stuck forever because no later
-  // cycle could exceed chatter=100 to trigger a replacement.
+  // Three independent sticky peaks. Each score updates only its own
+  // namespaced fields when it sets a new high, so a quiet overall cycle
+  // doesn't lose a goodChatter spike (or vice versa).
   const next = {
     ...(prev || {}),
     ppmHistory, goodPpmHistory, badPpmHistory,
-    maxPpm, maxGoodPpm, maxBadPpm,
   };
 
   let replaced = false;

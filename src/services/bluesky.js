@@ -5,10 +5,11 @@
 //
 // Uses sort=latest so timestamps are meaningful for rate calculation.
 //
-// Three independent 0-100 scores per game:
-//   chatter      — posts-per-minute rate + acceleration across all matched posts
-//   goodChatter  — same metric, computed over excitement-bucketed posts
-//   badChatter   — same metric, computed over boring-bucketed posts
+// Three independent 0-100 scores per game, each measuring fold-increase of
+// posts-per-minute over a rolling 5-cycle baseline (see calcChatterPpm):
+//   chatter      — across all matched posts
+//   goodChatter  — over excitement-bucketed posts
+//   badChatter   — over boring-bucketed posts
 // All three can be high simultaneously (passionate, mixed-reactions game).
 
 import {
@@ -31,14 +32,14 @@ const HEADERS = { 'User-Agent': 'Squeaker/1.0 (squeaker.app)' };
 // Fetch + score in one call. Returns null if no posts match.
 // Pass { includeSample: true } to get a labeled post snapshot in result.sample
 // (used by the live-game sampler in warmup.js — not stored in the peak).
-// Pass peakPpm / floorPpm (and good/bad variants) derived from the game's own
-// ppm history so the score is self-normalizing: 100 = at peak, 0 = at floor.
+// Pass floorPpm (and good/bad variants) derived from the game's own recent
+// ppm history — the score measures fold-increase over that baseline.
 // Supplied by the caller (warmup.js) from the cached chatter object.
 export async function chatterForGame(game, {
   includeSample = false,
-  peakPpm = 0,  floorPpm = 0,
-  peakGoodPpm = 0, floorGoodPpm = 0,
-  peakBadPpm  = 0, floorBadPpm  = 0,
+  floorPpm = 0,
+  floorGoodPpm = 0,
+  floorBadPpm = 0,
 } = {}) {
   const posts = await searchPosts(game);
   if (posts.length === 0) return null;
@@ -46,9 +47,7 @@ export async function chatterForGame(game, {
   if (matches.length === 0) return null;
   return scoreChatter(matches, {
     includeSample,
-    peakPpm, floorPpm,
-    peakGoodPpm, floorGoodPpm,
-    peakBadPpm, floorBadPpm,
+    floorPpm, floorGoodPpm, floorBadPpm,
   });
 }
 
@@ -189,9 +188,9 @@ function matchGame(game, posts) {
 
 function scoreChatter(matches, {
   includeSample = false,
-  peakPpm = 0,  floorPpm = 0,
-  peakGoodPpm = 0, floorGoodPpm = 0,
-  peakBadPpm  = 0, floorBadPpm  = 0,
+  floorPpm = 0,
+  floorGoodPpm = 0,
+  floorBadPpm = 0,
 } = {}) {
   // Bucket each post by sentiment. A post can land in both if it contains
   // terms from both lists — "blowout but what a finish" contributes to both.
@@ -208,9 +207,9 @@ function scoreChatter(matches, {
   const goodPpm = computePpm(goodPosts);
   const badPpm  = computePpm(badPosts);
 
-  const chatter     = calcChatterPpm(ppm,     peakPpm,     floorPpm);
-  const goodChatter = calcChatterPpm(goodPpm, peakGoodPpm, floorGoodPpm);
-  const badChatter  = calcChatterPpm(badPpm,  peakBadPpm,  floorBadPpm);
+  const chatter     = calcChatterPpm(ppm,     floorPpm);
+  const goodChatter = calcChatterPpm(goodPpm, floorGoodPpm);
+  const badChatter  = calcChatterPpm(badPpm,  floorBadPpm);
 
   // Aggregate engagement counts — kept for debug/history but not used in score.
   let likes = 0, reposts = 0, replies = 0;
