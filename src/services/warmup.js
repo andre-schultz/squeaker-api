@@ -151,10 +151,12 @@ async function updatePeakBuzz(game, current) {
 // Unlike the buzz cycle, this does N HTTP requests per cycle (one per
 // candidate game), spaced by BLUESKY_QUERY_DELAY_MS to stay under the public
 // AppView's ~3000 req/5min/IP budget. Each game gets three independent
-// 0-100 scores: chatter, goodChatter, badChatter. Each score is the
-// fold-increase of its ppm over the mean of the last 5 cycles, * 10
-// (10x → 100). The cached peak holds the running max for each score along
-// with the ppm-history needed to compute the next cycle's baselines.
+// scores: chatter, goodChatter, badChatter. Each score is the fold-increase
+// of its ppm over the mean of the last 5 cycles, * 10 (1x → 10, 10x → 100,
+// uncapped above that so viral surges stay distinguishable). The cached
+// peak is the single snapshot from the cycle that overall chatter peaked
+// on — good/bad in the peak reflect the sentiment of that moment, not the
+// all-time max of those bucketed scores.
 
 let chatterRunning = false;
 
@@ -233,42 +235,30 @@ async function updatePeakChatter(game, current) {
   const goodPpmHistory = [...(prev?.goodPpmHistory ?? []), current.goodPpm].slice(-PPM_HISTORY_MAX);
   const badPpmHistory  = [...(prev?.badPpmHistory  ?? []), current.badPpm ].slice(-PPM_HISTORY_MAX);
 
-  // Three independent sticky peaks. Each score updates only its own
-  // namespaced fields when it sets a new high, so a quiet overall cycle
-  // doesn't lose a goodChatter spike (or vice versa).
-  const next = {
-    ...(prev || {}),
-    ppmHistory, goodPpmHistory, badPpmHistory,
-  };
+  const histFields = { ppmHistory, goodPpmHistory, badPpmHistory };
 
-  let replaced = false;
-
+  // Single sticky peak driven by overall chatter — when chatter sets a new
+  // high, the whole snapshot (good/bad scores + raw counts) is replaced
+  // together. goodChatter and badChatter in the peak therefore answer
+  // "what sentiment was driving the moment chatter spiked?" rather than
+  // "highest goodChatter/badChatter ever seen". The previous lock-in trap
+  // (chatter capped at 100, peak frozen at cycle 2) is gone now that the
+  // score is uncapped fold-increase.
   if (current.chatter > (prev?.chatter ?? -1)) {
-    next.chatter      = current.chatter;
-    next.ppm          = current.ppm;
-    next.matchedPosts = current.matchedPosts;
-    next.likes        = current.likes;
-    next.reposts      = current.reposts;
-    next.replies      = current.replies;
-    next.recordedAt   = new Date().toISOString();
-    next.wasLive      = game.live;
-    replaced = true;
-  }
-  if (current.goodChatter > (prev?.goodChatter ?? -1)) {
-    next.goodChatter = current.goodChatter;
-    next.goodPpm     = current.goodPpm;
-    next.goodPosts   = current.goodPosts;
-    replaced = true;
-  }
-  if (current.badChatter > (prev?.badChatter ?? -1)) {
-    next.badChatter = current.badChatter;
-    next.badPpm     = current.badPpm;
-    next.badPosts   = current.badPosts;
-    replaced = true;
+    const peak = {
+      ...current,
+      ...histFields,
+      recordedAt: new Date().toISOString(),
+      wasLive: game.live,
+    };
+    await setCache(key, peak, CACHE_TTL.chatterPeak);
+    return { peak, replaced: true };
   }
 
-  await setCache(key, next, CACHE_TTL.chatterPeak);
-  return { peak: next, replaced };
+  // Chatter didn't peak but history advances — write back.
+  const updated = { ...prev, ...histFields };
+  await setCache(key, updated, CACHE_TTL.chatterPeak);
+  return { peak: updated, replaced: false };
 }
 
 // Per-finished-game snapshot for review/leaderboards. Called from BOTH the
