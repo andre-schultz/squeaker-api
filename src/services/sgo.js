@@ -156,6 +156,12 @@ export async function getOddsTimeline(gameId) {
 // velocity — largest single-step WP change within the last BETTING_WINDOW_MS;
 //            reflects what's happening right now.
 //
+// The ESPN pre-game baseline counts as the opener for drift when present.
+// This is intentional for games tracked from the start — the baseline-to-live
+// gap should be small and meaningful. For games picked up mid-way the score
+// will be inflated, but the peak is guarded separately (requires ≥2 SGO reads)
+// so mid-game cold-starts don't corrupt the peak.
+//
 // Calibration targets:
 //   10% total drift                        → ~20 pts
 //   25% total drift                        → ~50 pts

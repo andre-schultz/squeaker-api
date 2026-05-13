@@ -365,7 +365,12 @@ async function runOddsCycle() {
       matched++;
 
       const breakdown = computeBettingScore(timeline);
-      const { replaced } = await updatePeakBetting(game, breakdown);
+      // Only update peak once we have at least 2 real SGO reads — a single
+      // read has nothing to compare against and would lock in a zero peak.
+      const sgoCount = timeline.filter(s => !s.isBaseline).length;
+      const { replaced } = sgoCount >= 2
+        ? await updatePeakBetting(game, breakdown)
+        : { replaced: false };
       if (replaced) newPeaks++;
     }
 
