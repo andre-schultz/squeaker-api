@@ -37,15 +37,6 @@ const HISTORY_TTL = 30 * 24 * 60 * 60;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Mean of the n most-recent values in arr. Falls back to fewer values if
-// arr is shorter than n. Used as the chatter-score baseline so the score
-// reflects how much ppm has picked up vs the last few cycles.
-function meanRecent(arr, n) {
-  if (arr.length === 0) return 0;
-  const recent = arr.slice(-n);
-  return recent.reduce((s, v) => s + v, 0) / recent.length;
-}
-
 // ── Off-hours throttle ────────────────────────────────────────────────────────
 
 function isOffHours() {
@@ -153,13 +144,8 @@ async function updatePeakBuzz(game, current) {
 //
 // Unlike the buzz cycle, this does N HTTP requests per cycle (one per
 // candidate game), spaced by BLUESKY_QUERY_DELAY_MS to stay under the public
-// AppView's ~3000 req/5min/IP budget. Each game gets three independent
-// scores: chatter, goodChatter, badChatter. Each score is the fold-increase
-// of its ppm over the mean of the last 5 cycles, * 10 (1x → 10, 10x → 100,
-// uncapped above that so viral surges stay distinguishable). The cached
-// peak is the single snapshot from the cycle that overall chatter peaked
-// on — good/bad in the peak reflect the sentiment of that moment, not the
-// all-time max of those bucketed scores.
+// AppView's ~3000 req/5min/IP budget. Uses sort=top so only engaged posts
+// (likes+reposts+replies >= 3) contribute to the score.
 
 let chatterRunning = false;
 
@@ -187,13 +173,7 @@ async function runChatterCycle() {
         && Math.random() < 0.05
         && !(await getCache(`chatter-sample:${game.id}`));
 
-      const prevChatter = await getCache(`chatter:${game.id}`);
-      const current = await chatterForGame(game, {
-        includeSample: takeSample,
-        floorPpm:     meanRecent(prevChatter?.ppmHistory     ?? [], 5),
-        floorGoodPpm: meanRecent(prevChatter?.goodPpmHistory ?? [], 5),
-        floorBadPpm:  meanRecent(prevChatter?.badPpmHistory  ?? [], 5),
-      });
+      const current = await chatterForGame(game, { includeSample: takeSample });
       if (current) matched++;
 
       if (takeSample && current?.sample) {
@@ -223,8 +203,6 @@ async function runChatterCycle() {
   }
 }
 
-const PPM_HISTORY_MAX = 20; // ~100 minutes of history at 5-min cycle
-
 async function updatePeakChatter(game, current) {
   const key = `chatter:${game.id}`;
   const prev = await getCache(key);
@@ -233,24 +211,9 @@ async function updatePeakChatter(game, current) {
     return { peak: prev || null, replaced: false };
   }
 
-  // Append this cycle's readings to rolling history (used for floor next cycle).
-  const ppmHistory     = [...(prev?.ppmHistory     ?? []), current.ppm    ].slice(-PPM_HISTORY_MAX);
-  const goodPpmHistory = [...(prev?.goodPpmHistory ?? []), current.goodPpm].slice(-PPM_HISTORY_MAX);
-  const badPpmHistory  = [...(prev?.badPpmHistory  ?? []), current.badPpm ].slice(-PPM_HISTORY_MAX);
-
-  const histFields = { ppmHistory, goodPpmHistory, badPpmHistory };
-
-  // Single sticky peak driven by overall chatter — when chatter sets a new
-  // high, the whole snapshot (good/bad scores + raw counts) is replaced
-  // together. goodChatter and badChatter in the peak therefore answer
-  // "what sentiment was driving the moment chatter spiked?" rather than
-  // "highest goodChatter/badChatter ever seen". The previous lock-in trap
-  // (chatter capped at 100, peak frozen at cycle 2) is gone now that the
-  // score is uncapped fold-increase.
   if (current.chatter > (prev?.chatter ?? -1)) {
     const peak = {
       ...current,
-      ...histFields,
       recordedAt: new Date().toISOString(),
       wasLive: game.live,
     };
@@ -258,10 +221,7 @@ async function updatePeakChatter(game, current) {
     return { peak, replaced: true };
   }
 
-  // Chatter didn't peak but history advances — write back.
-  const updated = { ...prev, ...histFields };
-  await setCache(key, updated, CACHE_TTL.chatterPeak);
-  return { peak: updated, replaced: false };
+  return { peak: prev, replaced: false };
 }
 
 // Per-finished-game snapshot for review/leaderboards. Called from BOTH the
@@ -306,18 +266,11 @@ async function saveHistory(game, { peakBuzz, peakChatter } = {}) {
   } : {};
 
   const chatterFields = peakChatter ? {
-    peakChatter:         peakChatter.chatter ?? null,
-    peakGoodChatter:     peakChatter.goodChatter ?? null,
-    peakBadChatter:      peakChatter.badChatter ?? null,
-    peakPpm:             peakChatter.ppm ?? null,
-    peakGoodPpm:         peakChatter.goodPpm ?? null,
-    peakBadPpm:          peakChatter.badPpm ?? null,
-    chatterMatchedPosts: peakChatter.matchedPosts ?? null,
-    chatterGoodPosts:    peakChatter.goodPosts ?? null,
-    chatterBadPosts:     peakChatter.badPosts ?? null,
-    chatterLikes:        peakChatter.likes ?? null,
-    chatterReposts:      peakChatter.reposts ?? null,
-    chatterReplies:      peakChatter.replies ?? null,
+    peakChatter:          peakChatter.chatter ?? null,
+    peakEngagedCount:     peakChatter.engagedCount ?? null,
+    peakAvgEngagement:    peakChatter.avgEngagement ?? null,
+    peakTotalEngagement:  peakChatter.totalEngagement ?? null,
+    chatterMatchedPosts:  peakChatter.matchedPosts ?? null,
   } : {};
 
   const row = {

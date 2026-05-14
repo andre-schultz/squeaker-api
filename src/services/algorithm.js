@@ -135,23 +135,6 @@ function normalize(value, baseline) {
   return Math.min(100, Math.round((value / baseline) * 100));
 }
 
-// ── Chatter Score ────────────────────────────────────────────────────────────
-// Bluesky-only. Measures recent fold-increase in posts-per-minute relative to
-// a rolling baseline (mean of the last 5 ppm readings, or all available if
-// fewer):
-//   score = round((currentPpm / floor) * 10)
-// So 1x → 10, 5x → 50, 10x → 100, 20x → 200. Intentionally uncapped — the DB
-// stores the raw fold-increase so a genuine viral surge is distinguishable
-// from a normal spike. Clients can clamp to 0-100 for display.
-//
-// Edge case: floor === 0 (no history yet, or 5 cycles of dead silence) →
-// score 0. A genuine burst out of a dry spell registers next cycle once it's
-// in history; keeps the score honest when there's no baseline to compare to.
-export function calcChatterPpm(ppm, floor) {
-  if (floor === 0) return 0;
-  return Math.round((ppm / floor) * 10);
-}
-
 // ── Labels ───────────────────────────────────────────────────────────────────
 export function excitementLabel(score) {
   if (score >= 80) return 'Must Watch';

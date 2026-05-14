@@ -207,9 +207,9 @@ async function parseEvent(ev, sportKey, cfg) {
   // For live games this is the peak so far; for finished games it's the peak
   // across the whole game.
   const cachedChatter = BLUESKY_ENABLED ? await getCache(`chatter:${ev.id}`) : null;
-  game.peakChatter     = cachedChatter?.chatter     ?? null;
-  game.peakGoodChatter = cachedChatter?.goodChatter ?? null;
-  game.peakBadChatter  = cachedChatter?.badChatter  ?? null;
+  game.peakChatter        = cachedChatter?.chatter        ?? null;
+  game.peakEngagedCount   = cachedChatter?.engagedCount   ?? null;
+  game.peakAvgEngagement  = cachedChatter?.avgEngagement  ?? null;
 
   // ── Audit snapshot — captures everything that affects the excitement
   // score so a stored game can be replayed and explained later.
@@ -240,20 +240,13 @@ async function parseEvent(ev, sportKey, cfg) {
       buzz:       cachedBuzz
         ? { peak: cachedBuzz.buzz, sentiment: cachedBuzz.sentiment, matchedPosts: cachedBuzz.matchedPosts }
         : null,
-      // Chatter: three independent 0-100 peaks plus the raw engagement
-      // counts that fed them. Lets us replay a finished game and see
-      // exactly how loud Bluesky got and how the sentiment split played out.
       chatter:    cachedChatter
         ? {
-            peak:         cachedChatter.chatter,
-            goodPeak:     cachedChatter.goodChatter,
-            badPeak:      cachedChatter.badChatter,
-            matchedPosts: cachedChatter.matchedPosts,
-            goodPosts:    cachedChatter.goodPosts,
-            badPosts:     cachedChatter.badPosts,
-            likes:        cachedChatter.likes,
-            reposts:      cachedChatter.reposts,
-            replies:      cachedChatter.replies,
+            peak:            cachedChatter.chatter,
+            engagedCount:    cachedChatter.engagedCount,
+            avgEngagement:   cachedChatter.avgEngagement,
+            totalEngagement: cachedChatter.totalEngagement,
+            matchedPosts:    cachedChatter.matchedPosts,
           }
         : null,
       excitement: breakdown,

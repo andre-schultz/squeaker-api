@@ -65,32 +65,21 @@ export const SPORTS = {
   },
 };
 
-// ── Excitement language ───────────────────────────────────────────────────────
-// Researched from real game threads (LAFC vs SDFC, MLS May 2026, etc.)
+// ── Excitement language (Reddit buzz scoring) ─────────────────────────────────
 export const EXCITEMENT_WORDS = [
-  // Emojis — highest signal, cheapest match
   '🔥', '😱', '🤯', '💀', '😤', '🏆', '⚡', '🚀', '🙌', '👏', '🫡', '🥹',
-
-  // Classic hype
   'insane', 'unbelievable', 'clutch', 'legendary', 'crazy', 'incredible',
-  'amazing', 'omg', 'wow', 'wild', 'nuts', 'epic', 'hype', 'electric',
+  'amazing', 'omg', 'wow', 'nuts', 'epic', 'hype', 'electric',
   'fire', 'unreal', 'screaming', 'goat', 'banger', 'nasty', 'filthy',
-
-  // Casual internet
   "let's go", 'lets go', 'lfg', 'wtf', 'holy shit', 'oh shit',
   'no way', 'no shot', 'bro', 'dude', 'sheesh', 'damn',
-
-  // Game situation language
   'what a game', 'at the death', 'stoppage time', 'injury time',
   'dramatic', 'comeback', 'scenes', 'stunner', 'oh my god',
   'hold on', 'game on', 'levels it', 'equalizer', 'ties it',
   'last minute', 'late goal', 'buzzer', 'buzzer beater', 'buzzer-beater',
   'walk off', 'walk-off', 'walkoff', 'overtime', 'sudden death',
   'penalty', 'shootout', 'game winner', 'game-winner',
-  'hat trick', 'hat-trick', 'grand slam', 'sweep', 'upset',
-  'dagger',
-
-  // Reaction language
+  'hat trick', 'hat-trick', 'grand slam', 'sweep', 'upset', 'dagger',
   'crumbling', 'roaring back', 'turnaround', 'buries it',
   'unreal drama', 'absolute scenes',
   'i cant', "i can't", 'are you kidding',
@@ -100,23 +89,14 @@ export const EXCITEMENT_WORDS = [
 ];
 
 export const BORING_WORDS = [
-  // Emojis
   '😴', '🥱',
-
-  // Direct complaints
   'boring', 'unwatchable', 'garbage', 'terrible', 'awful',
   'disappointing', 'lopsided', 'snooze', 'trash', 'pathetic',
   'meh', 'predictable', 'embarrassing', 'disgraceful',
-
-  // Game situation
   'blowout', 'nothing game', 'dead rubber', 'no contest',
   'walk in the park', 'one-sided', 'not competitive',
-
-  // Viewer behavior
   'waste of time', 'gave up', 'stopped watching', 'turned it off',
   'changed the channel', 'who cares', 'tuned out',
-
-  // One-sided game language (verb forms and synonyms missed by 'blowout')
   'blow out', 'blew out', 'crushed', 'dominated', 'overwhelmed',
   'trounced', 'forgettable',
 ];

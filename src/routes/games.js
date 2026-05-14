@@ -38,7 +38,7 @@ router.get('/:id/buzz', async (req, res) => {
 });
 
 // GET /api/games/:id/chatter — Bluesky chatter peak (sticky high-water mark)
-// Returns { chatter, goodChatter, badChatter, matchedPosts, ... } or
+// Returns { chatter, engagedCount, avgEngagement, matchedPosts, ... } or
 // { chatter: null } if no chatter has been recorded for this game.
 router.get('/:id/chatter', async (req, res) => {
   try {
