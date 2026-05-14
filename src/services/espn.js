@@ -238,7 +238,7 @@ async function parseEvent(ev, sportKey, cfg) {
         breakdown: liveActionRaw, // null when not live
       },
       buzz:       cachedBuzz
-        ? { peak: cachedBuzz.buzz, sentiment: cachedBuzz.sentiment, matchedPosts: cachedBuzz.matchedPosts }
+        ? { peak: cachedBuzz.buzz, matchedPosts: cachedBuzz.matchedPosts }
         : null,
       chatter:    cachedChatter
         ? {

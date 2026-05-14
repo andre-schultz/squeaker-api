@@ -256,9 +256,6 @@ async function saveHistory(game, { peakBuzz, peakChatter } = {}) {
 
   const buzzFields = peakBuzz ? {
     peakBuzz:      peakBuzz.buzz ?? null,
-    peakGoodBuzz:  peakBuzz.goodBuzz ?? null,
-    peakBadBuzz:   peakBuzz.badBuzz ?? null,
-    peakSentiment: peakBuzz.sentiment ?? null,
     peakComments:  peakBuzz.comments ?? null,
     peakVelocity:  peakBuzz.velocity ?? null,
     matchedPosts:  peakBuzz.matchedPosts ?? null,

@@ -2,16 +2,10 @@
 // rate limits), we pull a single hot.json page from each tracked subreddit
 // per cycle and match the returned posts against the games we already know
 // about. One subreddit fetch covers all games being discussed in that sub.
-//
-// Sentiment is derived from post titles (good vs boring keyword hits). We
-// don't fetch comments per game — that's where the old model burned through
-// API budget for thin signal.
 
 import {
   REDDIT_SUBS,
   REDDIT_POSTS_PER_SUB,
-  EXCITEMENT_WORDS,
-  BORING_WORDS,
   SPORTS,
 } from '../config.js';
 import { calcBuzz } from './algorithm.js';
@@ -162,44 +156,17 @@ function scoreBuzz(game, matches) {
   const hrs = earliest === Infinity ? 1 : Math.max(0.25, (now - earliest) / 3600);
   const velocity = Math.round(comments / hrs);
 
-  // Sentiment from titles only — fast, no extra HTTP. Captures the broad
-  // tone of how the game is being discussed.
-  const titles = matches.map((p) => p.titleLower).join(' ');
-  const good = countHits(titles, EXCITEMENT_WORDS);
-  const bad = countHits(titles, BORING_WORDS);
-  const total = good + bad;
-  const sentiment = total === 0 ? 50 : Math.round((good / total) * 100);
-
   const buzz = calcBuzz(
-    { comments, upvotes, velocity, sentiment, isLive: game.live },
+    { comments, upvotes, velocity, isLive: game.live },
     sportCfg
   );
 
-  // Split out positive and negative buzz so the UI can show both poles.
-  // Both can be high simultaneously — that's a "passionate" game.
-  const goodBuzz = total === 0 ? 0 : Math.round(buzz * (good / total));
-  const badBuzz = total === 0 ? 0 : Math.round(buzz * (bad / total));
-
   return {
     buzz,
-    goodBuzz,
-    badBuzz,
     comments,
     upvotes,
     velocity,
-    sentiment,
     matchedPosts: matches.length,
     threadUrl: `https://reddit.com${topPost.permalink}`,
   };
-}
-
-function countHits(text, words) {
-  let n = 0;
-  for (const w of words) {
-    const hit = /\p{Emoji}/u.test(w) || w.includes(' ')
-      ? text.includes(w)
-      : new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(text);
-    if (hit) n++;
-  }
-  return n;
 }

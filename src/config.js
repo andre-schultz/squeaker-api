@@ -65,42 +65,6 @@ export const SPORTS = {
   },
 };
 
-// ── Excitement language (Reddit buzz scoring) ─────────────────────────────────
-export const EXCITEMENT_WORDS = [
-  '🔥', '😱', '🤯', '💀', '😤', '🏆', '⚡', '🚀', '🙌', '👏', '🫡', '🥹',
-  'insane', 'unbelievable', 'clutch', 'legendary', 'crazy', 'incredible',
-  'amazing', 'omg', 'wow', 'nuts', 'epic', 'hype', 'electric',
-  'fire', 'unreal', 'screaming', 'goat', 'banger', 'nasty', 'filthy',
-  "let's go", 'lets go', 'lfg', 'wtf', 'holy shit', 'oh shit',
-  'no way', 'no shot', 'bro', 'dude', 'sheesh', 'damn',
-  'what a game', 'at the death', 'stoppage time', 'injury time',
-  'dramatic', 'comeback', 'scenes', 'stunner', 'oh my god',
-  'hold on', 'game on', 'levels it', 'equalizer', 'ties it',
-  'last minute', 'late goal', 'buzzer', 'buzzer beater', 'buzzer-beater',
-  'walk off', 'walk-off', 'walkoff', 'overtime', 'sudden death',
-  'penalty', 'shootout', 'game winner', 'game-winner',
-  'hat trick', 'hat-trick', 'grand slam', 'sweep', 'upset', 'dagger',
-  'crumbling', 'roaring back', 'turnaround', 'buries it',
-  'unreal drama', 'absolute scenes',
-  'i cant', "i can't", 'are you kidding',
-  'holy', 'insane finish', 'crazy end',
-  'pulling level', 'fight back', 'never give up',
-  'what a play', 'what a shot', 'what a run',
-];
-
-export const BORING_WORDS = [
-  '😴', '🥱',
-  'boring', 'unwatchable', 'garbage', 'terrible', 'awful',
-  'disappointing', 'lopsided', 'snooze', 'trash', 'pathetic',
-  'meh', 'predictable', 'embarrassing', 'disgraceful',
-  'blowout', 'nothing game', 'dead rubber', 'no contest',
-  'walk in the park', 'one-sided', 'not competitive',
-  'waste of time', 'gave up', 'stopped watching', 'turned it off',
-  'changed the channel', 'who cares', 'tuned out',
-  'blow out', 'blew out', 'crushed', 'dominated', 'overwhelmed',
-  'trounced', 'forgettable',
-];
-
 // ── Cache TTLs (seconds) ──────────────────────────────────────────────────────
 export const CACHE_TTL = {
   liveGames:     180,    // 3 min — live games
