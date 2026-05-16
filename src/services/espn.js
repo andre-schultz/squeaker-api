@@ -83,7 +83,7 @@ async function parseEvent(ev, sportKey, cfg) {
   const detail    = (status?.shortDetail || '').toLowerCase();
   const rawDetail = status?.shortDetail || '';
 
-  const isOT = detail.includes('ot') ||
+  const isOT = /\bot\b/.test(detail) ||
                detail.includes('overtime') ||
                detail.includes('extra time') ||
                detail.includes('penalties') ||
@@ -273,7 +273,7 @@ function estimateProgress(sportKey, detail, comps) {
     if (!detail || detail.includes('final') || detail.includes('ft')) return 1.0;
 
     // Any overtime / extra time / penalties = full game played
-    if (detail.includes('ot') || detail.includes('overtime') ||
+    if (/\bot\b/.test(detail) || detail.includes('overtime') ||
         detail.includes('extra time') || detail.includes('penalties') ||
         detail.includes('shootout')) return 1.0;
 
