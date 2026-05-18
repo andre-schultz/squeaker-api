@@ -12,7 +12,6 @@
 import { fetchAllGames } from './espn.js';
 import { chatterForGame } from './bluesky.js';
 import { authConfigured } from './bsky-auth.js';
-import { fetchAllArticles, articlesForGame, updateGameArticles } from './articles.js';
 import { fetchSGOLiveEvents, recordOddsSnapshot, computeBettingScore } from './sgo.js';
 import { recordStatsSnapshot } from './stats.js';
 import { setCache, getCache } from './cache.js';
@@ -28,7 +27,6 @@ import {
 
 const GAME_REFRESH_MS = 3 * 60 * 1000;     // 3 min, active hours
 const CHATTER_REFRESH_MS = 5 * 60 * 1000;  // 5 min, active hours
-const ARTICLE_REFRESH_MS = 30 * 60 * 1000; // 30 min — articles update slowly
 const ODDS_REFRESH_MS = 10 * 60 * 1000;    // 10 min — matches SGO update frequency
 const STATS_REFRESH_MS = 3 * 60 * 1000;    // 3 min — same cadence as game cycle
 const OFF_REFRESH_MS = 10 * 60 * 1000;     // 10 min, off hours
@@ -333,40 +331,6 @@ async function updatePeakBetting(game, breakdown) {
   return { replaced };
 }
 
-// ── Article cycle (poll league news, match to games, store per-game) ──────────
-
-let articleRunning = false;
-
-async function runArticleCycle() {
-  if (articleRunning) return;
-  articleRunning = true;
-  const t0 = Date.now();
-  try {
-    const games = (await getCache('games:all')) || [];
-    if (games.length === 0) {
-      console.log('[articles] games:all empty, skipping cycle');
-      return;
-    }
-    const articles = await fetchAllArticles();
-    console.log(`[articles] pool: ${articles.length} articles`);
-
-    const candidates = games.filter(isRecentGame);
-    let matched = 0;
-    for (const game of candidates) {
-      const gameArticles = articlesForGame(game, articles);
-      if (gameArticles.length > 0) matched++;
-      await updateGameArticles(game, gameArticles);
-    }
-    console.log(
-      `[articles] cycle: ${candidates.length} games, ${matched} matched (${Date.now() - t0}ms)`
-    );
-  } catch (e) {
-    console.error('[articles] cycle failed:', e.message);
-  } finally {
-    articleRunning = false;
-  }
-}
-
 // ── Candidate filters ─────────────────────────────────────────────────────────
 
 // True while a game is still worth processing: live/upcoming, or done but
@@ -377,24 +341,16 @@ function isActiveCandidate(game) {
   return (Date.now() - new Date(game.doneAt).getTime()) < 60 * 60 * 1000;
 }
 
-// Broader window used only for articles (editorial coverage lingers).
-function isRecentGame(game) {
-  const ageHrs = (Date.now() - new Date(game.date).getTime()) / 3600000;
-  return ageHrs <= 36;
-}
-
 // ── Tick loop ─────────────────────────────────────────────────────────────────
 
 let lastGameRun = 0;
 let lastChatterRun = 0;
-let lastArticleRun = 0;
 let lastOddsRun = 0;
 let lastStatsRun = 0;
 
 function tick() {
   const gameInterval    = isOffHours() ? OFF_REFRESH_MS : GAME_REFRESH_MS;
   const chatterInterval = isOffHours() ? OFF_REFRESH_MS : CHATTER_REFRESH_MS;
-  const articleInterval = isOffHours() ? OFF_REFRESH_MS : ARTICLE_REFRESH_MS;
   const statsInterval   = isOffHours() ? OFF_REFRESH_MS : STATS_REFRESH_MS;
   const now = Date.now();
 
@@ -405,10 +361,6 @@ function tick() {
   if (BLUESKY_ENABLED && now - lastChatterRun >= chatterInterval) {
     lastChatterRun = now;
     runChatterCycle();
-  }
-  if (now - lastArticleRun >= articleInterval) {
-    lastArticleRun = now;
-    runArticleCycle();
   }
   if (SGO_ENABLED && now - lastOddsRun >= ODDS_REFRESH_MS) {
     lastOddsRun = now;
@@ -434,7 +386,6 @@ export async function warmCache() {
   } else {
     console.log('[chatter] disabled (BLUESKY_ENABLED != true) — skipping');
   }
-  await runArticleCycle();
   if (SGO_ENABLED) {
     await runOddsCycle();
   } else {

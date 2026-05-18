@@ -52,8 +52,6 @@ export const CACHE_TTL = {
   liveGames:     180,    // 3 min — live games
   finishedGames: 600,    // 10 min — finished games
   chatterPeak:   432000, // 5 days — peak Bluesky chatter, sticky high-water mark
-  articles:      3600,   // 1 hour — finished games' editorial coverage
-  articlesLive:  600,    // 10 min — live games refresh more often
   probabilities:  30 * 24 * 3600, // 30 days — WP timeline, mirrors score timeline
   frozenOdds:     30 * 24 * 3600, // 30 days — pre-game line, fetched once
   liveActionPeak: 30 * 24 * 3600, // 30 days — peak live-action score per game

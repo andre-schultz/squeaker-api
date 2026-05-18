@@ -54,19 +54,6 @@ router.get('/:id/chatter-sample', async (req, res) => {
   }
 });
 
-// GET /api/games/:id/articles — ESPN editorial coverage for a game
-// Returns { count, articles: [{ headline, url, type, published, image, ... }] }
-router.get('/:id/articles', async (req, res) => {
-  try {
-    const articles = await getCache(`articles:${req.params.id}`);
-    if (articles) return res.json(articles);
-    res.json({ count: 0, articles: [] });
-  } catch (e) {
-    console.error(`GET /api/games/${req.params.id}/articles error:`, e.message);
-    res.status(500).json({ error: 'Failed to fetch articles' });
-  }
-});
-
 // GET /api/games/:id/wp — win-probability timeline + drama summary
 // Returns { timeline: [{ t, homeWP, awayWP }], … }
 router.get('/:id/wp', async (req, res) => {
