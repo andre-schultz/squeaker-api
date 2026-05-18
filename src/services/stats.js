@@ -80,20 +80,33 @@ export async function recordStatsSnapshot(game, espnSport, espnLeague) {
 
   await setCache(`stats:${game.id}`, snapshot, STATS_TTL);
 
-  // Only append to timeline when shots change — avoids storing duplicate rows
-  // when the game is between scoring chances.
+  // Only append to timeline when something meaningful changes — avoids duplicate
+  // rows between plays. Uses shots for hockey, hits for other sports as a proxy,
+  // falling back to a simple JSON diff if neither field is present.
   const timelineKey = `stats-timeline:${game.id}`;
   const existing    = (await getCache(timelineKey)) || [];
   const last        = existing[existing.length - 1];
-  const changed     = !last
-    || last.home.shotsTotal !== stats.home.shotsTotal
-    || last.away.shotsTotal !== stats.away.shotsTotal;
+  const changed     = !last || hasStatsChanged(last, snapshot);
 
   if (changed) {
     await setCache(timelineKey, [...existing, snapshot], STATS_TTL);
   }
 
   return snapshot;
+}
+
+// Detect a meaningful change between two snapshots so the timeline doesn't
+// fill up with identical rows. Checks the most active counting stat available.
+function hasStatsChanged(prev, curr) {
+  const fields = ['shotsTotal', 'totalYards', 'totalOffensiveYards', 'hits', 'saves'];
+  for (const f of fields) {
+    if (prev.home[f] !== undefined) {
+      return prev.home[f] !== curr.home[f] || prev.away[f] !== curr.away[f];
+    }
+  }
+  // Fallback: compare full JSON (catches any stat change)
+  return JSON.stringify(prev.home) !== JSON.stringify(curr.home)
+      || JSON.stringify(prev.away) !== JSON.stringify(curr.away);
 }
 
 export async function getStats(gameId) {

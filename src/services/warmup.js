@@ -297,15 +297,12 @@ async function saveHistory(game, { peakBuzz, peakChatter, stats } = {}) {
   }
 }
 
-// ── Stats cycle (fetch ESPN summary stats for NHL games) ──────────────────────
+// ── Stats cycle (fetch ESPN summary stats for all tracked sports) ─────────────
 //
-// Polls the ESPN /summary endpoint for each NHL game that is live or recently
+// Polls the ESPN /summary endpoint for every game that is live or recently
 // finished (within 36 hours). Stores:
-//   stats:{gameId}          — latest snapshot (team stats + goalies)
-//   stats-timeline:{gameId} — append-only, one entry per shot-count change
-//
-// NHL-only for now; the summary endpoint structure differs enough across sports
-// that extending to others should be done deliberately.
+//   stats:{gameId}          — latest snapshot (team stats + sport-specific details)
+//   stats-timeline:{gameId} — append-only, one entry per scoring change
 
 let statsRunning = false;
 
@@ -315,10 +312,8 @@ async function runStatsCycle() {
   const t0 = Date.now();
   try {
     const games = (await getCache('games:all')) || [];
-    const nhlCfg = SPORTS.nhl;
 
     const candidates = games.filter(g => {
-      if (g.sport !== 'nhl') return false;
       const ageHrs = (Date.now() - new Date(g.date).getTime()) / 3600000;
       return ageHrs <= 36;
     });
@@ -327,7 +322,9 @@ async function runStatsCycle() {
 
     let fetched = 0;
     for (const game of candidates) {
-      const snapshot = await recordStatsSnapshot(game, nhlCfg.espnSport, nhlCfg.espnLeague);
+      const cfg = SPORTS[game.sport];
+      if (!cfg) continue;
+      const snapshot = await recordStatsSnapshot(game, cfg.espnSport, cfg.espnLeague);
       if (snapshot) {
         fetched++;
         if (game.done) {
@@ -336,7 +333,7 @@ async function runStatsCycle() {
       }
     }
 
-    console.log(`[stats] cycle: ${candidates.length} nhl games, ${fetched} fetched (${Date.now() - t0}ms)`);
+    console.log(`[stats] cycle: ${candidates.length} games, ${fetched} fetched (${Date.now() - t0}ms)`);
   } catch (e) {
     console.error('[stats] cycle failed:', e.message);
   } finally {
