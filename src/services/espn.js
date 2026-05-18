@@ -1,7 +1,7 @@
 // Uses native global fetch (Node 18+). node-fetch v3 was previously implicated
 // in a slow memory leak via undici pool retention; native fetch hits the
 // same undici layer but without the wrapper.
-import { SPORTS, HOURS_WINDOW, CACHE_TTL, AUDIT_ENABLED, REDDIT_ENABLED, BLUESKY_ENABLED } from '../config.js';
+import { SPORTS, HOURS_WINDOW, CACHE_TTL, AUDIT_ENABLED, BLUESKY_ENABLED } from '../config.js';
 import { calcExcitement, calcExcitementBreakdown, detectComeback, excitementDesc } from './algorithm.js';
 import { recordSnapshot, getTimeline, analyzeMomentum } from './timeline.js';
 import {
@@ -211,7 +211,6 @@ async function parseEvent(ev, sportKey, cfg) {
     excitement,
     desc:            excitementDesc(margin, isOT, isComeback, cfg),
     date:            ev.date,
-    subreddit:       cfg.sub,
     odds,                     // frozen pre-game line for display
     liveActionBuzz,           // 0-100, peak across whole game (sticky)
     currentLiveActionBuzz,    // 0-100, real-time, 0 when not live
@@ -229,32 +228,20 @@ async function parseEvent(ev, sportKey, cfg) {
   // ── Audit snapshot — captures everything that affects the excitement
   // score so a stored game can be replayed and explained later.
   // No-op when AUDIT_ENABLED is false.
-  //
-  // Articles are intentionally NOT in the audit — they don't feed the
-  // excitement score. The buzz read only happens when Reddit is on (and
-  // therefore there's actual buzz data to capture); skipping it when
-  // disabled saves a per-game cache hit each cycle.
   if (AUDIT_ENABLED) {
     const breakdown = calcExcitementBreakdown(
       margin, isOT, isComeback, cfg, momentumBonus,
       live ? progress : 1.0, dramaBonus, upsetBonus,
     );
-    const cachedBuzz = REDDIT_ENABLED ? await getCache(`buzz:${ev.id}`) : null;
     await recordAudit(game, {
       momentum:   { bonus: momentumBonus, signals },
       wp:         { bonus: dramaBonus, signals: wpSignals, maxSwing },
       upset:      { bonus: upsetBonus, winnerPreGameWP },
-      // Full liveAction breakdown so we can later see exactly which
-      // component (totalSwing, max swing, reversals) drove the score.
-      // current = the moment-by-moment value, peak = sticky high-water mark.
       liveAction: {
         current:   currentLiveActionBuzz,
         peak:      liveActionBuzz,
-        breakdown: liveActionRaw, // null when not live
+        breakdown: liveActionRaw,
       },
-      buzz:       cachedBuzz
-        ? { peak: cachedBuzz.buzz, matchedPosts: cachedBuzz.matchedPosts }
-        : null,
       chatter:    cachedChatter
         ? {
             peak:            cachedChatter.chatter,
