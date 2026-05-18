@@ -1,12 +1,12 @@
 // ── Excitement Score (0-100) ──────────────────────────────────────────────────
-// Closeness:        0-70 pts  (dominant factor)
+// Closeness:        0-75 pts  (dominant factor; maxed automatically when isOT)
 // Comeback:          +10 pts
 // OT:                +10 pts
 // Momentum bonus:    +20 pts  (late goals, lead changes, time spent close)
 // WP-drama bonus:    +15 pts  (sport-windowed win-prob swings, late comebacks)
 // Upset bonus:       +10 pts  (underdog won outright)
 //
-// Theoretical raw max if all bonuses fire: 135. Clamped to 100 at the end.
+// Theoretical raw max if all bonuses fire: 140. Clamped to 100 at the end.
 // Bonuses are independent — each contributes its full value if earned.
 
 export function calcExcitement(
@@ -19,7 +19,7 @@ export function calcExcitement(
   wpDramaBonus = 0,
   upsetBonus = 0,
 ) {
-  const cls = closenessScore(margin, sport.margins);
+  const cls = closenessScore(margin, sport.margins, isOT);
   const otBonus       = isOT       ? 10 : 0;
   const comebackBonus = isComeback ? 10 : 0;
   const raw =
@@ -54,7 +54,7 @@ export function calcExcitementBreakdown(
   wpDramaBonus = 0,
   upsetBonus = 0,
 ) {
-  const cls = closenessScore(margin, sport.margins);
+  const cls = closenessScore(margin, sport.margins, isOT);
   const otBonus       = isOT       ? 10 : 0;
   const comebackBonus = isComeback ? 10 : 0;
   const raw =
@@ -81,9 +81,12 @@ export function calcExcitementBreakdown(
 }
 
 // Closeness — proportionally rescaled from old 90/72/46/16/0 to fit a
-// 0-70 ceiling, preserving the relative gap between tiers.
-function closenessScore(margin, m) {
-  if (margin <= m.great)   return 70;
+// 0-75 ceiling, preserving the relative gap between tiers.
+// OT/extra-innings games are always max closeness — by definition the teams
+// were tied when regulation ended, regardless of the final margin.
+function closenessScore(margin, m, isOT = false) {
+  if (isOT)                return 75;
+  if (margin <= m.great)   return 75;
   if (margin <= m.good)    return 56;
   if (margin <= m.ok)      return 36;
   if (margin <= m.blowout) return 12;

@@ -87,7 +87,7 @@ async function parseEvent(ev, sportKey, cfg) {
                detail.includes('overtime') ||
                detail.includes('extra time') ||
                detail.includes('penalties') ||
-               (sportKey === 'mlb' && /f\/1[0-9]/.test(detail));
+               (sportKey === 'mlb' && /\/1[0-9]/.test(detail));
 
   // Game progress (0.0–1.0) — used to weight live excitement scores
   const progress = estimateProgress(sportKey, detail, comps);
@@ -123,7 +123,7 @@ async function parseEvent(ev, sportKey, cfg) {
   // Then run sport-windowed drama + upset analysis on the full timeline.
   const wpTimeline = await recordWPSnapshot(partialGame, cfg.espnSport, cfg.espnLeague);
   const { dramaBonus, signals: wpSignals, maxSwing } = analyzeWPDrama(wpTimeline, sportKey);
-  const { upsetBonus, winnerPreGameWP } = analyzeUpset(wpTimeline, {
+  let { upsetBonus, winnerPreGameWP } = analyzeUpset(wpTimeline, {
     ...partialGame,
     home: { ...partialGame.home, score: homeScore },
     away: { ...partialGame.away, score: awayScore },
@@ -133,6 +133,21 @@ async function parseEvent(ev, sportKey, cfg) {
   // ESPN's /odds endpoint returns the closing line and doesn't update during
   // live play, so polling is wasted. We grab once and embed on the game.
   const odds = await getOrFetchOdds(ev.id, cfg.espnSport, cfg.espnLeague);
+
+  // When the WP timeline was never recorded, fall back to the pre-game money
+  // line to detect upsets. Use vig-normalised implied probability so the two
+  // sides always sum to 1.0.
+  if (winnerPreGameWP === null && done && odds?.homeML != null && odds?.awayML != null) {
+    const rawHome = odds.homeML > 0 ? 100 / (odds.homeML + 100) : (-odds.homeML) / (-odds.homeML + 100);
+    const rawAway = odds.awayML > 0 ? 100 / (odds.awayML + 100) : (-odds.awayML) / (-odds.awayML + 100);
+    const total = rawHome + rawAway;
+    const winnerHome = homeScore > awayScore;
+    const winnerWP = (winnerHome ? rawHome : rawAway) / total;
+    winnerPreGameWP = winnerWP;
+    if (winnerWP < 0.5) {
+      upsetBonus = Math.min(10, Math.max(0, Math.round((0.5 - winnerWP) * 20)));
+    }
+  }
 
   // ── Live-action score from recent WP volatility ──────────────────────
   // Two fields exposed:
