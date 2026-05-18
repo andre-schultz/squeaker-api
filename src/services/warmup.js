@@ -15,6 +15,7 @@ import { chatterForGame } from './bluesky.js';
 import { authConfigured } from './bsky-auth.js';
 import { fetchAllArticles, articlesForGame, updateGameArticles } from './articles.js';
 import { fetchSGOLiveEvents, recordOddsSnapshot, computeBettingScore } from './sgo.js';
+import { recordStatsSnapshot } from './stats.js';
 import { setCache, getCache } from './cache.js';
 import {
   CACHE_TTL,
@@ -24,6 +25,7 @@ import {
   BLUESKY_HANDLE,
   BLUESKY_QUERY_DELAY_MS,
   SGO_ENABLED,
+  SPORTS,
 } from '../config.js';
 
 const GAME_REFRESH_MS = 3 * 60 * 1000;     // 3 min, active hours
@@ -31,6 +33,7 @@ const BUZZ_REFRESH_MS = 5 * 60 * 1000;     // 5 min, active hours
 const CHATTER_REFRESH_MS = 5 * 60 * 1000;  // 5 min, active hours
 const ARTICLE_REFRESH_MS = 10 * 60 * 1000; // 10 min — articles update slowly
 const ODDS_REFRESH_MS = 10 * 60 * 1000;    // 10 min — matches SGO update frequency
+const STATS_REFRESH_MS = 3 * 60 * 1000;    // 3 min — same cadence as game cycle
 const OFF_REFRESH_MS = 10 * 60 * 1000;     // 10 min, off hours
 const TICK_MS = 60 * 1000;                  // wake up once a minute
 const HISTORY_TTL = 30 * 24 * 60 * 60;
@@ -230,7 +233,7 @@ async function updatePeakChatter(game, current) {
 // and the other overlays its fields. Buzz fields are namespaced under
 // peakBuzz/peakGood/etc.; chatter fields under peakChatter/etc. so the two
 // signals stay distinguishable in the audit data.
-async function saveHistory(game, { peakBuzz, peakChatter } = {}) {
+async function saveHistory(game, { peakBuzz, peakChatter, stats } = {}) {
   if (!game.done) return;
   const date = new Date(game.date).toISOString().slice(0, 10);
   const key = `history:${date}:${game.id}`;
@@ -270,16 +273,74 @@ async function saveHistory(game, { peakBuzz, peakChatter } = {}) {
     chatterMatchedPosts:  peakChatter.matchedPosts ?? null,
   } : {};
 
+  // Final team stats snapshot — only written once (when the game is done) and
+  // only updated if we have fresh data. Goalies array preserves per-goalie lines.
+  const statsFields = stats ? {
+    finalStats: {
+      home: stats.home,
+      away: stats.away,
+      recordedAt: new Date().toISOString(),
+    },
+  } : {};
+
   const row = {
     ...base,
     ...buzzFields,
     ...chatterFields,
+    ...statsFields,
     savedAt: new Date().toISOString(),
   };
 
   await setCache(key, row, HISTORY_TTL);
   if (!existing) {
     console.log(`[history] saved ${game.away.abbr} vs ${game.home.abbr} (${date})`);
+  }
+}
+
+// ── Stats cycle (fetch ESPN summary stats for NHL games) ──────────────────────
+//
+// Polls the ESPN /summary endpoint for each NHL game that is live or recently
+// finished (within 36 hours). Stores:
+//   stats:{gameId}          — latest snapshot (team stats + goalies)
+//   stats-timeline:{gameId} — append-only, one entry per shot-count change
+//
+// NHL-only for now; the summary endpoint structure differs enough across sports
+// that extending to others should be done deliberately.
+
+let statsRunning = false;
+
+async function runStatsCycle() {
+  if (statsRunning) return;
+  statsRunning = true;
+  const t0 = Date.now();
+  try {
+    const games = (await getCache('games:all')) || [];
+    const nhlCfg = SPORTS.nhl;
+
+    const candidates = games.filter(g => {
+      if (g.sport !== 'nhl') return false;
+      const ageHrs = (Date.now() - new Date(g.date).getTime()) / 3600000;
+      return ageHrs <= 36;
+    });
+
+    if (candidates.length === 0) return;
+
+    let fetched = 0;
+    for (const game of candidates) {
+      const snapshot = await recordStatsSnapshot(game, nhlCfg.espnSport, nhlCfg.espnLeague);
+      if (snapshot) {
+        fetched++;
+        if (game.done) {
+          await saveHistory(game, { stats: snapshot });
+        }
+      }
+    }
+
+    console.log(`[stats] cycle: ${candidates.length} nhl games, ${fetched} fetched (${Date.now() - t0}ms)`);
+  } catch (e) {
+    console.error('[stats] cycle failed:', e.message);
+  } finally {
+    statsRunning = false;
   }
 }
 
@@ -397,12 +458,14 @@ let lastBuzzRun = 0;
 let lastChatterRun = 0;
 let lastArticleRun = 0;
 let lastOddsRun = 0;
+let lastStatsRun = 0;
 
 function tick() {
   const gameInterval    = isOffHours() ? OFF_REFRESH_MS : GAME_REFRESH_MS;
   const buzzInterval    = isOffHours() ? OFF_REFRESH_MS : BUZZ_REFRESH_MS;
   const chatterInterval = isOffHours() ? OFF_REFRESH_MS : CHATTER_REFRESH_MS;
   const articleInterval = isOffHours() ? OFF_REFRESH_MS : ARTICLE_REFRESH_MS;
+  const statsInterval   = isOffHours() ? OFF_REFRESH_MS : STATS_REFRESH_MS;
   const now = Date.now();
 
   if (now - lastGameRun >= gameInterval) {
@@ -424,6 +487,10 @@ function tick() {
   if (SGO_ENABLED && now - lastOddsRun >= ODDS_REFRESH_MS) {
     lastOddsRun = now;
     runOddsCycle();
+  }
+  if (now - lastStatsRun >= statsInterval) {
+    lastStatsRun = now;
+    runStatsCycle();
   }
 }
 
@@ -453,6 +520,7 @@ export async function warmCache() {
   } else {
     console.log('[odds] disabled (SGO_API_KEY not set) — skipping');
   }
+  await runStatsCycle();
   console.log('[warmup] initial warm complete');
 }
 

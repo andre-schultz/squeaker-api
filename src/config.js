@@ -79,6 +79,7 @@ export const CACHE_TTL = {
   audit:          3 * 24 * 3600,  // 3 days — algorithm audit log
   oddsTimeline:   30 * 24 * 3600, // 30 days — SGO live-odds WP timeline
   bettingPeak:    30 * 24 * 3600, // 30 days — peak betting score per game
+  stats:          30 * 24 * 3600, // 30 days — team/goalie stats snapshots
 };
 
 // ── Win-probability sliding-window lengths (per sport) ────────────────────────

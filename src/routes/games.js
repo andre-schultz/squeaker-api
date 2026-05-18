@@ -1,6 +1,7 @@
 import express from 'express';
 import { fetchAllGames } from '../services/espn.js';
 import { getCache, setCache } from '../services/cache.js';
+import { getStats, getStatsTimeline } from '../services/stats.js';
 import { CACHE_TTL } from '../config.js';
 
 const router = express.Router();
@@ -99,6 +100,31 @@ router.get('/:id/audit', async (req, res) => {
   } catch (e) {
     console.error(`GET /api/games/${req.params.id}/audit error:`, e.message);
     res.status(500).json({ error: 'Failed to fetch audit' });
+  }
+});
+
+// GET /api/games/:id/stats — latest team + goalie stats snapshot (NHL only for now)
+// Returns { t, live, done, home: { shotsTotal, hits, … goalies: [] }, away: { … } }
+// or null if no stats have been fetched for this game yet.
+router.get('/:id/stats', async (req, res) => {
+  try {
+    const stats = await getStats(req.params.id);
+    res.json(stats || null);
+  } catch (e) {
+    console.error(`GET /api/games/${req.params.id}/stats error:`, e.message);
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
+// GET /api/games/:id/stats-timeline — per-shot-change stats history for a game
+// Returns an array of snapshots ordered oldest-first, one entry per shot count change.
+router.get('/:id/stats-timeline', async (req, res) => {
+  try {
+    const timeline = await getStatsTimeline(req.params.id);
+    res.json(timeline);
+  } catch (e) {
+    console.error(`GET /api/games/${req.params.id}/stats-timeline error:`, e.message);
+    res.status(500).json({ error: 'Failed to fetch stats timeline' });
   }
 });
 
