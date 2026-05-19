@@ -21,7 +21,7 @@ function sum(a, b) {
 function soccer(game, s) {
   const { home, away } = s;
   return {
-    goals:         fuzz(game.homeScore + game.awayScore, 2),
+    goals:         fuzz(sum(game.home?.score, game.away?.score), 2),
     shots:         fuzz(sum(home.totalShots, away.totalShots), 4),
     shotsOnTarget: fuzz(sum(home.shotsOnTarget, away.shotsOnTarget), 2),
     saves:         fuzz(sum(home.saves, away.saves), 2),
@@ -39,7 +39,7 @@ function nhl(game, s) {
   const hG = home.goalies?.[0] || {};
   const aG = away.goalies?.[0] || {};
   return {
-    goals:          fuzz(game.homeScore + game.awayScore, 2),
+    goals:          fuzz(sum(game.home?.score, game.away?.score), 2),
     shots:          fuzz(sum(home.shotsTotal, away.shotsTotal), 8),
     saves:          fuzz(sum(hG.saves, aG.saves), 8),
     powerPlayGoals: fuzz(sum(home.powerPlayGoals, away.powerPlayGoals), 2),
@@ -53,7 +53,7 @@ function nhl(game, s) {
 function mlb(game, s) {
   const { home, away } = s;
   return {
-    runs:          fuzz(game.homeScore + game.awayScore, 2),
+    runs:          fuzz(sum(game.home?.score, game.away?.score), 2),
     hits:          fuzz(sum(home.batting_hits, away.batting_hits), 3),
     errors:        fuzz(sum(home.fielding_errors, away.fielding_errors), 1),
     extraBaseHits: fuzz(sum(home.batting_extraBaseHits, away.batting_extraBaseHits), 1),
@@ -70,7 +70,7 @@ function nba(game, s) {
   const { home, away } = s;
   const THREE_KEY = 'threePointFieldGoalsMade-threePointFieldGoalsAttempted';
   return {
-    points:        fuzz(game.homeScore + game.awayScore, 15),
+    points:        fuzz(sum(game.home?.score, game.away?.score), 15),
     threePointers: fuzz(sum(home[THREE_KEY], away[THREE_KEY]), 3),
     rebounds:      fuzz(sum(home.totalRebounds, away.totalRebounds), 8),
     stealsBlocks:  fuzz(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 3),
@@ -81,7 +81,7 @@ function nba(game, s) {
 function nfl(game, s) {
   const { home, away } = s;
   return {
-    points:        fuzz(game.homeScore + game.awayScore, 7),
+    points:        fuzz(sum(game.home?.score, game.away?.score), 7),
     interceptions: fuzz(sum(home.interceptions, away.interceptions), 1),
     firstDowns:    fuzz(sum(home.firstDowns, away.firstDowns), 5),
     fumbles:       fuzz(sum(home.fumbles, away.fumbles), 1),
