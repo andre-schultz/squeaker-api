@@ -163,10 +163,12 @@ export async function getOddsTimeline(gameId) {
 // so mid-game cold-starts don't corrupt the peak.
 //
 // Calibration targets:
-//   10% total drift                        → ~20 pts
-//   25% total drift                        → ~50 pts
-//   15% velocity in last 10 min            → ~45 pts
-//   25% drift + 15% velocity (big swing)   → ~95 pts
+//   10% total drift                        → ~10 pts
+//   25% total drift                        → ~25 pts
+//   40% total drift (decisive win)         → ~40 pts
+//   15% velocity in last 10 min            → ~23 pts
+//   40% drift + 30% velocity (wild swing)  → ~85 pts
+//   60% drift + 40% velocity (max chaos)   → ~120 pts → clamped to 100
 export function computeBettingScore(timeline) {
   const result = {
     score:         0,
@@ -199,7 +201,7 @@ export function computeBettingScore(timeline) {
     result.velocity = maxDelta;
   }
 
-  const raw    = result.drift * 200 + result.velocity * 300;
+  const raw    = result.drift * 100 + result.velocity * 150;
   result.score = Math.min(100, Math.round(raw));
   return result;
 }

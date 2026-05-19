@@ -65,13 +65,16 @@ export const CACHE_TTL = {
 // Drama signal = "the game flipped within this window". Window length adapts
 // to each sport's natural drama cadence so a 25% threshold means the same
 // thing across NBA (gradual WP) and MLB (one-swing-can-flip-it).
+// Sports where ESPN exposes win probability. The ms values are unused by the
+// drama analysis (which now diffs consecutive snapshots directly) but the
+// presence of a key gates whether WP tracking runs for that sport at all.
 export const WP_WINDOW_MS = {
-  nba: 2 * 60_000,   // 2 min — typical clutch run
-  cbb: 2 * 60_000,
-  nfl: 90_000,       // ~1 drive
-  cfb: 90_000,
-  mlb: 12 * 60_000,  // ~1 half-inning at modern pace
-  nhl: 5 * 60_000,   // meaningful in a 60-min game
+  nba: 1,
+  cbb: 1,
+  nfl: 1,
+  cfb: 1,
+  mlb: 1,
+  nhl: 1,
   // soccer (mls/epl/ucl) intentionally absent — ESPN doesn't expose WP for soccer
 };
 

@@ -65,28 +65,20 @@ export async function getWPTimeline(gameId) {
   return (await getCache(`probabilities:${gameId}`)) || [];
 }
 
-// Sport-windowed drama analysis. Returns { dramaBonus, signals, maxSwing }.
+// Drama analysis. Returns { dramaBonus, signals, maxSwing }.
+// Compares each snapshot to the previous one — effectively the polling interval
+// (~3 min real time). No window needed since sampling is already consistent.
 export function analyzeWPDrama(timeline, sport) {
   if (!timeline || timeline.length < 2) {
     return { dramaBonus: 0, signals: [], maxSwing: 0 };
   }
-  const window = WP_WINDOW_MS[sport];
-  if (!window) return { dramaBonus: 0, signals: [], maxSwing: 0 };
+  if (!WP_WINDOW_MS[sport]) return { dramaBonus: 0, signals: [], maxSwing: 0 };
 
   let maxSwing = 0;
   let bigSwingCount = 0;
 
-  // For each snapshot, find the swing vs. the earliest snapshot still
-  // within `window` ms in the past.
   for (let i = 1; i < timeline.length; i++) {
-    const tNow = timeline[i].t;
-    const tStart = tNow - window;
-    let earliestIdx = i;
-    for (let j = i; j >= 0; j--) {
-      if (timeline[j].t < tStart) break;
-      earliestIdx = j;
-    }
-    const swing = Math.abs(timeline[i].homeWP - timeline[earliestIdx].homeWP);
+    const swing = Math.abs(timeline[i].homeWP - timeline[i - 1].homeWP);
     if (swing > maxSwing) maxSwing = swing;
     if (swing >= 0.25) bigSwingCount++;
   }
