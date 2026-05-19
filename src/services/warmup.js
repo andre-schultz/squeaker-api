@@ -15,6 +15,7 @@ import { authConfigured } from './bsky-auth.js';
 import { fetchSGOLiveEvents, recordOddsSnapshot, computeBettingScore } from './sgo.js';
 import { recordStatsSnapshot } from './stats.js';
 import { recordApproxStats } from './approxStats.js';
+import { recordStatsBonus } from './statsBonus.js';
 import { setCache, getCache } from './cache.js';
 import {
   CACHE_TTL,
@@ -244,6 +245,7 @@ async function runStatsCycle() {
       const snapshot = await recordStatsSnapshot(game, cfg.espnSport, cfg.espnLeague);
       if (snapshot) {
         fetched++;
+        await recordStatsBonus(game, snapshot);
         if (game.done) {
           await saveHistory(game, { stats: snapshot });
           await recordApproxStats(game, snapshot);

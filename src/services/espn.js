@@ -12,6 +12,7 @@ import {
 } from './probabilities.js';
 import { getOrFetchOdds } from './odds.js';
 import { recordAudit } from './audit.js';
+import { getStatsBonus } from './statsBonus.js';
 import { getCache, setCache } from './cache.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports';
@@ -234,6 +235,7 @@ async function parseEvent(ev, sportKey, cfg) {
       margin, isOT, isComeback, cfg, momentumBonus,
       live ? progress : 1.0, dramaBonus, upsetBonus,
     );
+    const statsBonus = await getStatsBonus(ev.id);
     await recordAudit(game, {
       momentum:   { bonus: momentumBonus, signals },
       wp:         { bonus: dramaBonus, signals: wpSignals, maxSwing },
@@ -251,6 +253,9 @@ async function parseEvent(ev, sportKey, cfg) {
             totalEngagement: cachedChatter.totalEngagement,
             matchedPosts:    cachedChatter.matchedPosts,
           }
+        : null,
+      statsActivity: statsBonus
+        ? { score: statsBonus.score, breakdown: statsBonus.breakdown }
         : null,
       excitement: breakdown,
     });
