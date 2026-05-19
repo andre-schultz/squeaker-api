@@ -23,9 +23,17 @@ export async function fetchGameStats(gameId, espnSport, espnLeague) {
 
     const parseTeamStats = (team) => {
       const stats = {};
+      const parseStat = (name, displayValue) => {
+        const val = parseFloat(displayValue);
+        stats[name] = isNaN(val) ? displayValue : val;
+      };
       for (const s of team.statistics || []) {
-        const val = parseFloat(s.displayValue);
-        stats[s.name] = isNaN(val) ? s.displayValue : val;
+        if (Array.isArray(s.stats)) {
+          // MLB nested format: { name: 'batting', stats: [{name, displayValue}, ...] }
+          for (const sub of s.stats) parseStat(`${s.name}_${sub.name}`, sub.displayValue);
+        } else {
+          parseStat(s.name, s.displayValue);
+        }
       }
       return stats;
     };

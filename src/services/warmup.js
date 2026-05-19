@@ -14,6 +14,7 @@ import { chatterForGame } from './bluesky.js';
 import { authConfigured } from './bsky-auth.js';
 import { fetchSGOLiveEvents, recordOddsSnapshot, computeBettingScore } from './sgo.js';
 import { recordStatsSnapshot } from './stats.js';
+import { recordApproxStats } from './approxStats.js';
 import { setCache, getCache } from './cache.js';
 import {
   CACHE_TTL,
@@ -245,6 +246,7 @@ async function runStatsCycle() {
         fetched++;
         if (game.done) {
           await saveHistory(game, { stats: snapshot });
+          await recordApproxStats(game, snapshot);
         }
       }
     }

@@ -2,6 +2,7 @@ import express from 'express';
 import { fetchAllGames } from '../services/espn.js';
 import { getCache, setCache } from '../services/cache.js';
 import { getStats, getStatsTimeline } from '../services/stats.js';
+import { getApproxStats } from '../services/approxStats.js';
 import { CACHE_TTL } from '../config.js';
 
 const router = express.Router();
@@ -100,6 +101,18 @@ router.get('/:id/stats-timeline', async (req, res) => {
   } catch (e) {
     console.error(`GET /api/games/${req.params.id}/stats-timeline error:`, e.message);
     res.status(500).json({ error: 'Failed to fetch stats timeline' });
+  }
+});
+
+// GET /api/games/:id/approx-stats — fuzzed combined totals for finished games
+// Returns { t, sport, approx: { goals, shots, … } } or null if not yet computed.
+router.get('/:id/approx-stats', async (req, res) => {
+  try {
+    const data = await getApproxStats(req.params.id);
+    res.json(data || null);
+  } catch (e) {
+    console.error(`GET /api/games/${req.params.id}/approx-stats error:`, e.message);
+    res.status(500).json({ error: 'Failed to fetch approx stats' });
   }
 });
 
