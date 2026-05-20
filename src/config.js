@@ -45,6 +45,21 @@ export const SPORTS = {
     espnSport: 'soccer', espnLeague: 'uefa.champions',
     margins: { great: 1, good: 2, ok: 3, blowout: 4 },
   },
+  wnba: {
+    name: 'WNBA', emoji: '🏀',
+    espnSport: 'basketball', espnLeague: 'wnba',
+    margins: { great: 3, good: 8, ok: 15, blowout: 25 },
+  },
+  nwsl: {
+    name: 'NWSL', emoji: '⚽',
+    espnSport: 'soccer', espnLeague: 'usa.nwsl',
+    margins: { great: 1, good: 2, ok: 3, blowout: 4 },
+  },
+  wcbb: {
+    name: "Women's College BB", emoji: '🏀',
+    espnSport: 'basketball', espnLeague: 'womens-college-basketball',
+    margins: { great: 3, good: 8, ok: 15, blowout: 25 },
+  },
 };
 
 // ── Cache TTLs (seconds) ──────────────────────────────────────────────────────
@@ -69,12 +84,14 @@ export const CACHE_TTL = {
 // presence of a key gates whether WP tracking runs for that sport at all.
 export const WP_WINDOW_MS = {
   nba: 1,
+  wnba: 1,
   cbb: 1,
+  wcbb: 1,
   nfl: 1,
   cfb: 1,
   mlb: 1,
   nhl: 1,
-  // soccer (mls/epl/ucl) intentionally absent — ESPN doesn't expose WP for soccer
+  // soccer (mls/epl/ucl/nwsl) intentionally absent — ESPN doesn't expose WP for soccer
 };
 
 // ── Feature flags ─────────────────────────────────────────────────────────────
