@@ -236,9 +236,11 @@ async function updatePeakBetting(game, breakdown) {
 
 // ── Candidate filters ─────────────────────────────────────────────────────────
 
-// True while a game is still worth processing: live/upcoming, or done but
-// finished within the last hour. Uses doneAt stamped by runGameCycle.
+// True while a game is worth fetching stats for: started but not yet stale.
+// Scheduled games are excluded — ESPN returns no boxscore until kickoff.
+// Done games are dropped after 1 hour to stop hammering finished games.
 function isActiveCandidate(game) {
+  if (!game.live && !game.done) return false;
   if (!game.done) return true;
   if (!game.doneAt) return true;
   return (Date.now() - new Date(game.doneAt).getTime()) < 60 * 60 * 1000;
