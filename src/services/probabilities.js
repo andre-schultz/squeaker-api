@@ -170,15 +170,16 @@ export function computeLiveActionBuzz(timeline) {
     }
   }
 
-  // 0-100 composite. Calibration:
-  //   totalSwing × 150  →  60 pts at 0.40 cumulative WP movement
-  //   maxSingle  × 100  →  30 pts at 0.30 max single-step swing
-  //   reversals  × 5    →  25 pts at 5 direction changes
-  // A truly chaotic, back-and-forth stretch hits 100. A single big play
-  // with no reversals lands ~50-60. A quiet stretch stays near 0.
+  // 0-100 composite. Calibration targets assume ~4 samples per 10-min window
+  // (ESPN WP updates every ~9 min), so thresholds are set accordingly:
+  //   totalSwing × 80   →  64 pts at 0.80 cumulative WP movement
+  //   maxSingle  × 60   →  30 pts at 0.50 max single-step swing
+  //   reversals  × 5    →  10 pts at 2 direction changes (max possible w/ 4 samples)
+  // A walk-off or extreme late swing (0.80+ single) hits ~100.
+  // A single big play (0.30 swing) lands ~40. A quiet stretch stays near 0.
   const raw =
-    result.totalSwing * 150 +
-    result.maxSingleSwing * 100 +
+    result.totalSwing * 80 +
+    result.maxSingleSwing * 60 +
     result.directionChanges * 5;
   result.score = Math.min(100, Math.round(raw));
   return result;
