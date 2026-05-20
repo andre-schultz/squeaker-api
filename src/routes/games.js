@@ -27,6 +27,17 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/games/upcoming — scheduled games for today and tomorrow
+router.get('/upcoming', async (req, res) => {
+  try {
+    const cached = await getCache('games:upcoming');
+    res.json(cached || []);
+  } catch (e) {
+    console.error('GET /api/games/upcoming error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch upcoming games' });
+  }
+});
+
 // GET /api/games/:id/wp — win-probability timeline + drama summary
 // Returns { timeline: [{ t, homeWP, awayWP }], … }
 router.get('/:id/wp', async (req, res) => {

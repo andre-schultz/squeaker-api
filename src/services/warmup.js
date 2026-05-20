@@ -9,7 +9,7 @@
 //  • All HTTP responses are drained inside espn.js even on
 //    error paths so undici sockets get released promptly.
 
-import { fetchAllGames } from './espn.js';
+import { fetchAllEvents } from './espn.js';
 import { fetchSGOLiveEvents, recordOddsSnapshot, computeBettingScore } from './sgo.js';
 import { recordStatsSnapshot } from './stats.js';
 import { recordApproxStats } from './approxStats.js';
@@ -54,7 +54,7 @@ async function runGameCycle() {
       prev.filter(g => g.doneAt).map(g => [g.id, g.doneAt])
     );
     const now = new Date().toISOString();
-    const games = await fetchAllGames();
+    const { games, upcoming } = await fetchAllEvents();
     const enriched = games.map(g => ({
       ...g,
       doneAt: g.done ? (prevDoneAt[g.id] ?? now) : undefined,
@@ -62,7 +62,8 @@ async function runGameCycle() {
     const hasLive = enriched.some((g) => g.live);
     const ttl = hasLive ? CACHE_TTL.liveGames : CACHE_TTL.finishedGames;
     await setCache('games:all', enriched, ttl);
-    console.log(`[games] refreshed (${enriched.length} games)`);
+    await setCache('games:upcoming', upcoming, CACHE_TTL.finishedGames);
+    console.log(`[games] refreshed (${enriched.length} games, ${upcoming.length} upcoming)`);
   } catch (e) {
     console.error('[games] cycle failed:', e.message);
   } finally {

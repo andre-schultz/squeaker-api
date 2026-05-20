@@ -17,23 +17,41 @@ import { getCache, setCache } from './cache.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 
-// Fetch all games across all sports within the time window
-export async function fetchAllGames() {
-  const dates = getDateStrings();
+// Fetch all games and upcoming games in a single ESPN pass.
+// Returns { games, upcoming } where games is sorted by excitement desc
+// and upcoming is sorted by start time asc.
+export async function fetchAllEvents() {
+  const dates = getAllDateStrings();
   const results = await Promise.all(
     Object.entries(SPORTS).map(([key, cfg]) => fetchSport(key, cfg, dates))
   );
-  const seen  = new Set();
-  const games = results.flat().filter(g => {
-    if (seen.has(g.id)) return false;
-    seen.add(g.id);
+  const seenGames    = new Set();
+  const seenUpcoming = new Set();
+  const games = results.flatMap(r => r.games).filter(g => {
+    if (seenGames.has(g.id)) return false;
+    seenGames.add(g.id);
     return true;
   });
-  return games.sort((a, b) => b.excitement - a.excitement);
+  const upcoming = results.flatMap(r => r.upcoming).filter(g => {
+    if (seenUpcoming.has(g.id)) return false;
+    seenUpcoming.add(g.id);
+    return true;
+  });
+  return {
+    games:    games.sort((a, b) => b.excitement - a.excitement),
+    upcoming: upcoming.sort((a, b) => new Date(a.date) - new Date(b.date)),
+  };
+}
+
+// Backward-compat wrapper used by the cache-miss fallback in routes/games.js
+export async function fetchAllGames() {
+  const { games } = await fetchAllEvents();
+  return games;
 }
 
 async function fetchSport(key, cfg, dates) {
-  const games = [];
+  const games    = [];
+  const upcoming = [];
   for (const date of dates) {
     try {
       const url = `${BASE}/${cfg.espnSport}/${cfg.espnLeague}/scoreboard${date ? `?dates=${date}` : ''}`;
@@ -47,7 +65,9 @@ async function fetchSport(key, cfg, dates) {
       const events = data.events || [];
       for (const ev of events) {
         const game = await parseEvent(ev, key, cfg);
-        if (game) games.push(game);
+        if (game) { games.push(game); continue; }
+        const upcomingGame = parseUpcomingEvent(ev, key, cfg);
+        if (upcomingGame) upcoming.push(upcomingGame);
       }
       // Release the parsed payload before iterating to the next date.
       data = null;
@@ -55,7 +75,7 @@ async function fetchSport(key, cfg, dates) {
       console.error(`ESPN fetch error [${key}]:`, e.message);
     }
   }
-  return games;
+  return { games, upcoming };
 }
 
 async function parseEvent(ev, sportKey, cfg) {
@@ -246,10 +266,74 @@ async function parseEvent(ev, sportKey, cfg) {
   return game;
 }
 
+function parseUpcomingEvent(ev, sportKey, cfg) {
+  const co = ev.competitions?.[0];
+  if (!co) return null;
+
+  const status = co.status?.type;
+  if (status?.state !== 'pre') return null;
+
+  const comps = co.competitors || [];
+  const home  = comps.find(c => c.homeAway === 'home');
+  const away  = comps.find(c => c.homeAway === 'away');
+  if (!home || !away) return null;
+
+  const mkTeam = (T) => ({
+    name:     T.team.shortDisplayName || T.team.displayName,
+    fullName: T.team.displayName,
+    abbr:     T.team.abbreviation,
+    logo:     T.team.logo,
+    color:    T.team.color ? `#${T.team.color}` : '#374151',
+    record:   T.records?.find(r => r.type === 'total')?.summary ?? null,
+  });
+
+  const rawOdds = co.odds?.[0];
+  const odds = rawOdds ? {
+    details:    rawOdds.details ?? null,
+    homeML:     rawOdds.moneyline?.home?.close?.odds ?? null,
+    awayML:     rawOdds.moneyline?.away?.close?.odds ?? null,
+    spread:     rawOdds.spread ?? null,
+    overUnder:  rawOdds.overUnder ?? null,
+  } : null;
+
+  const venue = co.venue ? {
+    name:   co.venue.fullName,
+    city:   co.venue.address?.city ?? null,
+    state:  co.venue.address?.state ?? null,
+    indoor: co.venue.indoor ?? null,
+  } : null;
+
+  const broadcasts = (co.broadcasts || []).map(b => ({ market: b.market, names: b.names }));
+
+  return {
+    id:         ev.id,
+    sport:      sportKey,
+    sportName:  cfg.name,
+    sportEmoji: cfg.emoji,
+    date:       ev.date,
+    home:       mkTeam(home),
+    away:       mkTeam(away),
+    venue,
+    broadcasts,
+    odds,
+  };
+}
+
 // Returns date strings for today and the past 4 days (5 days total)
 function getDateStrings() {
   const dates = [];
   for (let i = 0; i <= 4; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    dates.push(d.toISOString().slice(0, 10).replace(/-/g, ''));
+  }
+  return dates;
+}
+
+// Returns date strings for today and tomorrow (covers pre-game events)
+function getAllDateStrings() {
+  const dates = [];
+  for (let i = -1; i <= 4; i++) {
     const d = new Date();
     d.setDate(d.getDate() - i);
     dates.push(d.toISOString().slice(0, 10).replace(/-/g, ''));
