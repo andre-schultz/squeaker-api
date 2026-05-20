@@ -1,7 +1,7 @@
 // Uses native global fetch (Node 18+). node-fetch v3 was previously implicated
 // in a slow memory leak via undici pool retention; native fetch hits the
 // same undici layer but without the wrapper.
-import { SPORTS, HOURS_WINDOW, CACHE_TTL, AUDIT_ENABLED, BLUESKY_ENABLED } from '../config.js';
+import { SPORTS, HOURS_WINDOW, CACHE_TTL, AUDIT_ENABLED } from '../config.js';
 import { calcExcitement, calcExcitementBreakdown, detectComeback, excitementDesc } from './algorithm.js';
 import { recordSnapshot, getTimeline, analyzeMomentum } from './timeline.js';
 import {
@@ -218,15 +218,6 @@ async function parseEvent(ev, sportKey, cfg) {
     currentLiveActionBuzz,    // 0-100, real-time, 0 when not live
   };
 
-  // ── Peak chatter — embed sticky high-water Bluesky scores so clients can
-  // display them on the game card without a separate /chatter request.
-  // For live games this is the peak so far; for finished games it's the peak
-  // across the whole game.
-  const cachedChatter = BLUESKY_ENABLED ? await getCache(`chatter:${ev.id}`) : null;
-  game.peakChatter        = cachedChatter?.chatter        ?? null;
-  game.peakEngagedCount   = cachedChatter?.engagedCount   ?? null;
-  game.peakAvgEngagement  = cachedChatter?.avgEngagement  ?? null;
-
   // ── Audit snapshot — captures everything that affects the excitement
   // score so a stored game can be replayed and explained later.
   // No-op when AUDIT_ENABLED is false.
@@ -245,15 +236,6 @@ async function parseEvent(ev, sportKey, cfg) {
         peak:      liveActionBuzz,
         breakdown: liveActionRaw,
       },
-      chatter:    cachedChatter
-        ? {
-            peak:            cachedChatter.chatter,
-            engagedCount:    cachedChatter.engagedCount,
-            avgEngagement:   cachedChatter.avgEngagement,
-            totalEngagement: cachedChatter.totalEngagement,
-            matchedPosts:    cachedChatter.matchedPosts,
-          }
-        : null,
       statsActivity: statsBonus
         ? { score: statsBonus.score, breakdown: statsBonus.breakdown }
         : null,

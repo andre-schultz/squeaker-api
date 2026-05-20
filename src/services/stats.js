@@ -1,7 +1,7 @@
 import { getCache, setCache } from './cache.js';
 
 const SUMMARY_BASE = 'https://site.api.espn.com/apis/site/v2/sports';
-const STATS_TTL = 30 * 24 * 60 * 60; // 30 days
+const STATS_TTL = 7 * 24 * 60 * 60; // 7 days
 
 // Fetch team + goalie stats from ESPN's summary endpoint.
 // Returns { home, away } with team stats and a goalies array, or null on failure.
@@ -72,7 +72,9 @@ export async function fetchGameStats(gameId, espnSport, espnLeague) {
 
 // Fetch stats for a game and persist to Redis.
 // - stats:{gameId}          — latest snapshot, overwritten each cycle
-// - stats-timeline:{gameId} — append-only list, written only when shots change
+// - stats-timeline:{gameId} — delta-compressed log: first entry is a full
+//   snapshot, subsequent entries contain only fields that changed. To
+//   reconstruct state at any point, merge entries in order (Object.assign).
 // Returns the snapshot or null if ESPN returned nothing.
 export async function recordStatsSnapshot(game, espnSport, espnLeague) {
   const stats = await fetchGameStats(game.id, espnSport, espnLeague);
@@ -90,9 +92,48 @@ export async function recordStatsSnapshot(game, espnSport, espnLeague) {
 
   const timelineKey = `stats-timeline:${game.id}`;
   const existing    = (await getCache(timelineKey)) || [];
-  await setCache(timelineKey, [...existing, snapshot], STATS_TTL);
 
+  let entry;
+  if (existing.length === 0) {
+    entry = snapshot;
+  } else {
+    const lastFull  = mergeDeltas(existing);
+    const homeDiff  = diffFields(stats.home, lastFull.home || {});
+    const awayDiff  = diffFields(stats.away, lastFull.away || {});
+    const lastEntry = existing[existing.length - 1];
+    if (Object.keys(homeDiff).length === 0 &&
+        Object.keys(awayDiff).length === 0 &&
+        lastEntry.live === game.live &&
+        lastEntry.done === game.done) {
+      entry = { t: snapshot.t }; // no changes — timestamp only
+    } else {
+      entry = { t: snapshot.t, live: game.live, done: game.done, home: homeDiff, away: awayDiff };
+    }
+  }
+
+  await setCache(timelineKey, [...existing, entry], STATS_TTL);
   return snapshot;
+}
+
+// Merge all delta entries into a single reconstructed state object.
+function mergeDeltas(entries) {
+  const home = {}, away = {};
+  for (const entry of entries) {
+    Object.assign(home, entry.home || {});
+    Object.assign(away, entry.away || {});
+  }
+  return { home, away };
+}
+
+// Return only the fields in current that differ from previous.
+function diffFields(current, previous) {
+  const diff = {};
+  for (const [key, val] of Object.entries(current)) {
+    if (JSON.stringify(val) !== JSON.stringify(previous[key] ?? null)) {
+      diff[key] = val;
+    }
+  }
+  return diff;
 }
 
 export async function getStats(gameId) {

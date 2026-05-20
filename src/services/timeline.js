@@ -1,6 +1,6 @@
 import { getCache, setCache } from './cache.js';
 
-const TIMELINE_TTL = 30 * 24 * 60 * 60; // 30 days — keep for algorithm training
+const TIMELINE_TTL = 7 * 24 * 60 * 60; // 7 days
 
 // Snapshot the current score for a live or recently finished game
 export async function recordSnapshot(game) {

@@ -1,6 +1,6 @@
 import { setCache, getCache } from './cache.js';
 
-const APPROX_TTL = 30 * 24 * 60 * 60; // 30 days
+const APPROX_TTL = 7 * 24 * 60 * 60; // 7 days
 
 // Pick uniformly from the unique set of values reachable by adding offsets in
 // [-noise, +noise] to value, clamped to >= 0.  Deduplication prevents low values

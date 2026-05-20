@@ -51,14 +51,13 @@ export const SPORTS = {
 export const CACHE_TTL = {
   liveGames:     180,    // 3 min — live games
   finishedGames: 600,    // 10 min — finished games
-  chatterPeak:   432000, // 5 days — peak Bluesky chatter, sticky high-water mark
-  probabilities:  30 * 24 * 3600, // 30 days — WP timeline, mirrors score timeline
-  frozenOdds:     30 * 24 * 3600, // 30 days — pre-game line, fetched once
-  liveActionPeak: 30 * 24 * 3600, // 30 days — peak live-action score per game
-  audit:          3 * 24 * 3600,  // 3 days — algorithm audit log
-  oddsTimeline:   30 * 24 * 3600, // 30 days — SGO live-odds WP timeline
-  bettingPeak:    30 * 24 * 3600, // 30 days — peak betting score per game
-  stats:          30 * 24 * 3600, // 30 days — team/goalie stats snapshots
+  probabilities:  7 * 24 * 3600, // 7 days — WP timeline, mirrors score timeline
+  frozenOdds:     7 * 24 * 3600, // 7 days — pre-game line, fetched once
+  liveActionPeak: 7 * 24 * 3600, // 7 days — peak live-action score per game
+  audit:          3 * 24 * 3600, // 3 days — algorithm audit log
+  oddsTimeline:   7 * 24 * 3600, // 7 days — SGO live-odds WP timeline
+  bettingPeak:    7 * 24 * 3600, // 7 days — peak betting score per game
+  stats:          7 * 24 * 3600, // 7 days — team/goalie stats snapshots
 };
 
 // ── Win-probability sliding-window lengths (per sport) ────────────────────────
@@ -94,37 +93,10 @@ export const AUDIT_ENABLED = isTruthy(process.env.AUDIT_ENABLED);
 // ── Time window ───────────────────────────────────────────────────────────────
 export const HOURS_WINDOW = 120; // show games from last 5 days
 
-// ── Bluesky chatter ───────────────────────────────────────────────────────────
-// Per-game queries against the public AppView's searchPosts endpoint. Each
-// game gets its own search ("<homeName> <awayName>", sort=latest, since=
-// game−30min) so a game's chatter score reflects actual posts about THAT
-// game rather than a fixed pool divvied up across the league. Popular games
-// naturally outscore quiet ones — that's the whole point.
-export const BLUESKY_ENABLED = process.env.BLUESKY_ENABLED == null
-  ? true
-  : isTruthy(process.env.BLUESKY_ENABLED);
-
-// Per-game search limit. Bluesky's searchPosts caps at 100 per call.
-export const BLUESKY_LIMIT_PER_GAME = 100;
-
-// Delay between per-game queries, ms. From Railway's IP range the AppView
-// starts 403'ing after ~10 calls in quick succession (sliding window). 750ms
-// keeps a 30-game cycle under 25s and stays comfortably under the throttle.
-export const BLUESKY_QUERY_DELAY_MS = 750;
-
-// How early before tipoff a post counts as "about this game".
-export const BLUESKY_SINCE_OFFSET_MS = 30 * 60 * 1000; // 30 min
-
 // ── SportsGameOdds live odds ──────────────────────────────────────────────────
 // Enabled automatically when SGO_API_KEY is present. No separate flag needed —
 // the key being set is the opt-in. Polls live in-game moneylines every 10 min
 // (matching SGO's free-tier update frequency) for all live games.
 export const SGO_ENABLED = !!process.env.SGO_API_KEY;
 
-// Bluesky auth — when both vars are set, requests go through with a session
-// JWT (much higher rate limits, dodges the unauth WAF rules that were 403'ing
-// specific queries from Railway IPs). When unset, falls back to anonymous
-// requests so local dev still works without creds.
-export const BLUESKY_HANDLE = process.env.BLUESKY_HANDLE || null;
-export const BLUESKY_APP_PASSWORD = process.env.BLUESKY_APP_PASSWORD || null;
 

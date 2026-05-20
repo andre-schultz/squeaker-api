@@ -27,34 +27,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/games/:id/chatter — Bluesky chatter peak (sticky high-water mark)
-// Returns { chatter, engagedCount, avgEngagement, matchedPosts, ... } or
-// { chatter: null } if no chatter has been recorded for this game.
-router.get('/:id/chatter', async (req, res) => {
-  try {
-    const chatter = await getCache(`chatter:${req.params.id}`);
-    if (chatter) return res.json(chatter);
-    res.json({ chatter: null });
-  } catch (e) {
-    console.error(`GET /api/games/${req.params.id}/chatter error:`, e.message);
-    res.status(500).json({ error: 'Failed to fetch chatter' });
-  }
-});
-
-// GET /api/games/:id/chatter-sample — raw post snapshot taken during a live game
-// Returns { gameLabel, sampledAt, posts: [{ text, likes, reposts, replies, bad, good }] }
-// or { posts: null } if no sample has been taken for this game.
-router.get('/:id/chatter-sample', async (req, res) => {
-  try {
-    const sample = await getCache(`chatter-sample:${req.params.id}`);
-    if (sample) return res.json(sample);
-    res.json({ posts: null });
-  } catch (e) {
-    console.error(`GET /api/games/${req.params.id}/chatter-sample error:`, e.message);
-    res.status(500).json({ error: 'Failed to fetch chatter sample' });
-  }
-});
-
 // GET /api/games/:id/wp — win-probability timeline + drama summary
 // Returns { timeline: [{ t, homeWP, awayWP }], … }
 router.get('/:id/wp', async (req, res) => {

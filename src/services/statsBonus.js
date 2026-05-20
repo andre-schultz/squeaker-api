@@ -1,6 +1,6 @@
 import { setCache, getCache } from './cache.js';
 
-const BONUS_TTL = 30 * 24 * 60 * 60; // 30 days
+const BONUS_TTL = 7 * 24 * 60 * 60; // 7 days
 const MAX_BONUS = 15;
 
 // Normalize a value against a baseline, capped at 1.0.
