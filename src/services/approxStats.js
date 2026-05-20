@@ -58,7 +58,6 @@ function mlb(game, s) {
     errors:        fuzz(sum(home.fielding_errors, away.fielding_errors), 1),
     extraBaseHits: fuzz(sum(home.batting_extraBaseHits, away.batting_extraBaseHits), 1),
     homeRuns:      fuzz(sum(home.batting_homeRuns, away.batting_homeRuns), 1),
-    rbis:          fuzz(sum(home.batting_RBIs, away.batting_RBIs), 2),
     walks:         fuzz(sum(home.batting_walks, away.batting_walks), 2),
     stolenBases:   fuzz(sum(home.batting_stolenBases, away.batting_stolenBases), 1),
     doublePlays:   fuzz(sum(home.fielding_doublePlays, away.fielding_doublePlays), 1),
