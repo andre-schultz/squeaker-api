@@ -17,6 +17,31 @@ import { getCache, setCache } from './cache.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 
+// ── In-process done-game cache ────────────────────────────────────────────────
+// Once a game completes and is fully scored, its record is frozen here.
+// Subsequent calls to parseEvent (same process) return immediately — 0 Redis,
+// 0 ESPN-per-game work. On restart, warmup.js pre-populates this via
+// preFreezeGames() so the very first cycle is also free.
+// NOTE: the warmup.js _doneGames Map is the authoritative store; this Map is
+// just a fast-path for parseEvent. warmup.js is responsible for lifecycle.
+const frozenGames = new Map(); // gameId → game object
+
+// Pre-populate frozenGames from a previously saved games list (called on startup
+// so the first game cycle skips full processing for already-done games).
+export function preFreezeGames(games) {
+  for (const game of games) {
+    if (game.done && !frozenGames.has(game.id)) {
+      frozenGames.set(game.id, game);
+    }
+  }
+}
+
+// Remove a game from frozenGames when warmup.js prunes it from _doneGames.
+// Keeps both Maps in sync so stale entries don't accumulate indefinitely.
+export function pruneFrozenGame(id) {
+  frozenGames.delete(id);
+}
+
 // Fetch all games and upcoming games in a single ESPN pass.
 // Returns { games, upcoming } where games is sorted by excitement desc
 // and upcoming is sorted by start time asc.
@@ -91,6 +116,15 @@ async function parseEvent(ev, sportKey, cfg) {
   const gameTime = new Date(ev.date);
   const cutoff   = new Date(Date.now() - HOURS_WINDOW * 60 * 60 * 1000);
   if (gameTime < cutoff) return null;
+
+  // ── Fast path: in-process done-game cache ────────────────────────────
+  // Done games never change. If we've already processed this game in this
+  // process (or warmup pre-loaded it), return immediately — 0 Redis, 0 ESPN.
+  if (done) {
+    const mem = frozenGames.get(ev.id);
+    if (mem) return mem;
+    // Not frozen yet — fall through to full processing, freeze at end.
+  }
 
   const comps = co.competitors || [];
   const home  = comps.find(c => c.homeAway === 'home');
@@ -263,6 +297,15 @@ async function parseEvent(ev, sportKey, cfg) {
     });
   }
 
+  // ── Freeze in-process ────────────────────────────────────────────────
+  // Store in the local Map so the next call to parseEvent for this game
+  // short-circuits immediately. warmup.js adds it to _doneGames so it
+  // survives future cycles without any ESPN or Redis work.
+  if (done) {
+    frozenGames.set(ev.id, game);
+    console.log(`[frozen] ${game.away.abbr} @ ${game.home.abbr} (${game.sport}) — game frozen`);
+  }
+
   return game;
 }
 
@@ -330,10 +373,14 @@ function getDateStrings() {
   return dates;
 }
 
-// Returns date strings for today and tomorrow (covers pre-game events)
+// Returns date strings for tomorrow, today, and yesterday.
+// Three dates covers: upcoming (tomorrow), live (today), and edge cases like
+// games that started last night and finished after midnight (yesterday's date).
+// Done games older than yesterday come from warmup.js's _doneGames Map —
+// we never re-fetch them from ESPN.
 function getAllDateStrings() {
   const dates = [];
-  for (let i = -1; i <= 4; i++) {
+  for (let i = -1; i <= 1; i++) {
     const d = new Date();
     d.setDate(d.getDate() - i);
     dates.push(d.toISOString().slice(0, 10).replace(/-/g, ''));

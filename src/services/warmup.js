@@ -9,18 +9,28 @@
 //  • All HTTP responses are drained inside espn.js even on
 //    error paths so undici sockets get released promptly.
 
-import { fetchAllEvents } from './espn.js';
+import { fetchAllEvents, preFreezeGames, pruneFrozenGame } from './espn.js';
 import { fetchSGOLiveEvents, recordOddsSnapshot, computeBettingScore } from './sgo.js';
 import { recordStatsSnapshot } from './stats.js';
 import { recordApproxStats } from './approxStats.js';
 import { recordStatsBonus } from './statsBonus.js';
-import { setCache, getCache } from './cache.js';
+import { setCache, getCache, drainCacheCounters } from './cache.js';
 import {
   CACHE_TTL,
   AUDIT_ENABLED,
   SGO_ENABLED,
   SPORTS,
+  HOURS_WINDOW,
 } from '../config.js';
+
+// Format a drained-counters snapshot as a compact log string.
+// e.g. "GET.frozenGame=120 GET.games=2 SET.games=2 SET.probabilities=5"
+function fmtCounters(counts) {
+  const entries = Object.entries(counts).sort();
+  if (entries.length === 0) return '(none)';
+  const total = entries.reduce((s, [, v]) => s + v, 0);
+  return `${total} ops — ` + entries.map(([k, v]) => `${k}=${v}`).join(' ');
+}
 
 const GAME_REFRESH_MS = 3 * 60 * 1000;     // 3 min, active hours
 const ODDS_REFRESH_MS = 10 * 60 * 1000;    // 10 min — matches SGO update frequency
@@ -41,6 +51,16 @@ function isOffHours() {
   return hour >= 2 && hour < 9;
 }
 
+// ── Game lifecycle tracking ───────────────────────────────────────────────────
+// _doneGames holds every game that has finished, keyed by game ID. It is the
+// authoritative in-memory store for done games — nothing reads Redis or calls
+// ESPN for these games again. It is initialized from games:all on first run so
+// a process restart recovers immediately from the single existing Redis key.
+//
+// _initialized gates the one-time boot load so subsequent cycles skip it.
+const _doneGames   = new Map(); // gameId → done game object (includes doneAt)
+let   _initialized = false;
+
 // ── Game cycle (refresh games:all) ────────────────────────────────────────────
 
 let gameRunning = false;
@@ -49,23 +69,61 @@ async function runGameCycle() {
   if (gameRunning) return;
   gameRunning = true;
   try {
-    const prev = (await getCache('games:all')) || [];
-    const prevDoneAt = Object.fromEntries(
-      prev.filter(g => g.doneAt).map(g => [g.id, g.doneAt])
-    );
     const now = new Date().toISOString();
-    const { games, upcoming } = await fetchAllEvents();
-    const enriched = games.map(g => ({
-      ...g,
-      doneAt: g.done ? (prevDoneAt[g.id] ?? now) : undefined,
-    }));
-    const hasLive = enriched.some((g) => g.live);
-    const ttl = hasLive ? CACHE_TTL.liveGames : CACHE_TTL.finishedGames;
-    await setCache('games:all', enriched, ttl);
+
+    // ── One-time boot: recover done games from the previous Redis snapshot ──
+    // This is the ONLY time we read games:all from Redis for population
+    // purposes. After this, done games live purely in _doneGames.
+    if (!_initialized) {
+      const prev = (await getCache('games:all')) || [];
+      for (const g of prev) {
+        if (g.done) _doneGames.set(g.id, g);
+      }
+      // Pre-populate espn.js frozenGames so the first ESPN cycle skips full
+      // processing for done games that are already in _doneGames.
+      preFreezeGames([..._doneGames.values()]);
+      console.log(`[games] boot: recovered ${_doneGames.size} done games from cache`);
+      _initialized = true;
+    }
+
+    // ── Fetch live + newly-done games from ESPN (today ± 1 day only) ──────
+    // espn.js now only fetches 3 date strings, so ESPN is never called for
+    // games older than yesterday. Done games from prior days come from _doneGames.
+    const { games: freshGames, upcoming } = await fetchAllEvents();
+
+    // ── Update _doneGames with any newly-finished games ───────────────────
+    for (const game of freshGames) {
+      if (game.done && !_doneGames.has(game.id)) {
+        // First time we see this game as done — stamp doneAt and remember it.
+        _doneGames.set(game.id, { ...game, doneAt: now });
+      }
+    }
+
+    // ── Prune done games older than the display window (5 days) ──────────
+    // Both _doneGames (warmup.js) and frozenGames (espn.js) are kept in sync
+    // so neither Map accumulates stale entries across long-running processes.
+    const cutoff = Date.now() - HOURS_WINDOW * 60 * 60 * 1000;
+    for (const [id, g] of _doneGames) {
+      if (new Date(g.date).getTime() < cutoff) {
+        _doneGames.delete(id);
+        pruneFrozenGame(id);
+      }
+    }
+
+    // ── Compose full game list: live (fresh) + all known done games ───────
+    const liveGames = freshGames.filter(g => g.live);
+    const allGames  = [...liveGames, ..._doneGames.values()]
+      .sort((a, b) => b.excitement - a.excitement);
+
+    const ttl = liveGames.length > 0 ? CACHE_TTL.liveGames : CACHE_TTL.finishedGames;
+    await setCache('games:all', allGames, ttl);
     await setCache('games:upcoming', upcoming, CACHE_TTL.finishedGames);
-    console.log(`[games] refreshed (${enriched.length} games, ${upcoming.length} upcoming)`);
+
+    console.log(`[games] refreshed — ${liveGames.length} live, ${_doneGames.size} done, ${upcoming.length} upcoming`);
+    console.log(`[redis] game-cycle — ${fmtCounters(drainCacheCounters())}`);
   } catch (e) {
     console.error('[games] cycle failed:', e.message);
+    drainCacheCounters();
   } finally {
     gameRunning = false;
   }
@@ -154,8 +212,10 @@ async function runStatsCycle() {
     }
 
     console.log(`[stats] cycle: ${candidates.length} games, ${fetched} fetched (${Date.now() - t0}ms)`);
+    console.log(`[redis] stats-cycle — ${fmtCounters(drainCacheCounters())}`);
   } catch (e) {
     console.error('[stats] cycle failed:', e.message);
+    drainCacheCounters();
   } finally {
     statsRunning = false;
   }
@@ -206,8 +266,10 @@ async function runOddsCycle() {
       `[odds] cycle: ${liveGames.length} live, ${matched} matched, ` +
       `${newPeaks} new peaks, ${sgoEvents.length} SGO events (${Date.now() - t0}ms)`
     );
+    console.log(`[redis] odds-cycle — ${fmtCounters(drainCacheCounters())}`);
   } catch (e) {
     console.error('[odds] cycle failed:', e.message);
+    drainCacheCounters();
   } finally {
     oddsRunning = false;
   }
