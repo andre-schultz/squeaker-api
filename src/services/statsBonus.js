@@ -3,78 +3,100 @@ import { setCache, getCache } from './cache.js';
 const BONUS_TTL = 7 * 24 * 60 * 60; // 7 days
 const MAX_BONUS = 15;
 
-// Normalize a value against a baseline, capped at 1.0.
-function norm(value, baseline) {
-  return Math.min(1, (value || 0) / baseline);
+// Range-normalize: maps [floor, ceiling] → [0, 1], clamped.
+// floor   = realistic minimum for a below-average game
+// ceiling = ~p90 of real games (top ~10% hit or exceed it, scoring near 15)
+// Values for stats that naturally start at 0 use floor=0.
+function nr(value, floor, ceiling) {
+  return Math.max(0, Math.min(1, ((value || 0) - floor) / (ceiling - floor)));
 }
 
 function sum(a, b) {
   return (a || 0) + (b || 0);
 }
 
-// Each sport function returns a score 0–15 and a breakdown of what contributed.
-function soccer(s) {
+// Each sport function returns a score 1–15 and a breakdown of normalised components.
+// totalScore = home.score + away.score passed in from the game object.
+
+function soccer(s, totalScore) {
   const { home, away } = s;
   const stats = {
-    shots:         norm(sum(home.totalShots, away.totalShots), 30),
-    shotsOnTarget: norm(sum(home.shotsOnTarget, away.shotsOnTarget), 10),
-    cards:         norm(sum(home.yellowCards, away.yellowCards) + sum(home.redCards, away.redCards), 5),
-    corners:       norm(sum(home.wonCorners, away.wonCorners), 14),
+    goals:         nr(totalScore, 0, 4),
+    shots:         nr(sum(home.totalShots, away.totalShots), 10, 32),
+    shotsOnTarget: nr(sum(home.shotsOnTarget, away.shotsOnTarget), 2, 13),
+    cards:         nr(sum(home.yellowCards, away.yellowCards) + sum(home.redCards, away.redCards), 0, 7),
+    corners:       nr(sum(home.wonCorners, away.wonCorners), 3, 16),
   };
-  const weights = { shots: 0.35, shotsOnTarget: 0.30, cards: 0.20, corners: 0.15 };
+  const weights = { goals: 0.25, shots: 0.25, shotsOnTarget: 0.25, cards: 0.15, corners: 0.10 };
   return weighted(stats, weights);
 }
 
-function nhl(s) {
+function nhl(s, totalScore) {
   const { home, away } = s;
   const stats = {
-    shots:       norm(sum(home.shotsTotal, away.shotsTotal), 70),
-    hits:        norm(sum(home.hits, away.hits), 60),
-    powerPlays:  norm(sum(home.powerPlayOpportunities, away.powerPlayOpportunities), 8),
+    goals:       nr(totalScore, 0, 6),
+    shots:       nr(sum(home.shotsTotal, away.shotsTotal), 55, 70),
+    hits:        nr(sum(home.hits, away.hits), 45, 70),
+    powerPlays:  nr(sum(home.powerPlayOpportunities, away.powerPlayOpportunities), 2, 9),
   };
-  const weights = { shots: 0.45, hits: 0.30, powerPlays: 0.25 };
+  const weights = { goals: 0.25, shots: 0.35, hits: 0.25, powerPlays: 0.15 };
   return weighted(stats, weights);
 }
 
-function mlb(s) {
+function mlb(s, totalScore) {
   const { home, away } = s;
   const stats = {
-    hits:          norm(sum(home.batting_hits, away.batting_hits), 16),
-    homeRuns:      norm(sum(home.batting_homeRuns, away.batting_homeRuns), 4),
-    extraBaseHits: norm(sum(home.batting_extraBaseHits, away.batting_extraBaseHits), 8),
-    stolenBases:   norm(sum(home.batting_stolenBases, away.batting_stolenBases), 4),
-    errors:        norm(sum(home.fielding_errors, away.fielding_errors), 3),
+    runs:          nr(totalScore, 0, 14),
+    hits:          nr(sum(home.batting_hits, away.batting_hits), 5, 21),
+    homeRuns:      nr(sum(home.batting_homeRuns, away.batting_homeRuns), 0, 4),
+    extraBaseHits: nr(sum(home.batting_extraBaseHits, away.batting_extraBaseHits), 1, 10),
+    stolenBases:   nr(sum(home.batting_stolenBases, away.batting_stolenBases), 0, 4),
+    errors:        nr(sum(home.fielding_errors, away.fielding_errors), 0, 2),
   };
-  const weights = { hits: 0.25, homeRuns: 0.25, extraBaseHits: 0.20, stolenBases: 0.15, errors: 0.15 };
+  const weights = { runs: 0.20, hits: 0.15, homeRuns: 0.25, extraBaseHits: 0.20, stolenBases: 0.10, errors: 0.10 };
   return weighted(stats, weights);
 }
 
-function nba(s) {
+function nba(s, totalScore) {
   const { home, away } = s;
   const THREE_KEY = 'threePointFieldGoalsMade-threePointFieldGoalsAttempted';
   const stats = {
-    threePointers: norm(sum(home[THREE_KEY], away[THREE_KEY]), 28),
-    stealsBlocks:  norm(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 18),
+    points:        nr(totalScore, 200, 260),
+    threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 15, 40),
+    stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 15, 40),
   };
-  const weights = { threePointers: 0.50, stealsBlocks: 0.50 };
+  const weights = { points: 0.20, threePointers: 0.45, stealsBlocks: 0.35 };
   return weighted(stats, weights);
 }
 
-function nfl(s) {
+function wnba(s, totalScore) {
+  const { home, away } = s;
+  const THREE_KEY = 'threePointFieldGoalsMade-threePointFieldGoalsAttempted';
+  const stats = {
+    points:        nr(totalScore, 140, 200),
+    threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 8, 22),
+    stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 12, 30),
+  };
+  const weights = { points: 0.20, threePointers: 0.45, stealsBlocks: 0.35 };
+  return weighted(stats, weights);
+}
+
+function nfl(s, totalScore) {
   const { home, away } = s;
   const stats = {
-    turnovers:  norm(sum(home.interceptions, away.interceptions) + sum(home.fumbles, away.fumbles), 4),
-    firstDowns: norm(sum(home.firstDowns, away.firstDowns), 50),
-    yards:      norm(sum(home.totalYards, away.totalYards), 800),
+    points:     nr(totalScore, 3, 65),
+    turnovers:  nr(sum(home.interceptions, away.interceptions) + sum(home.fumbles, away.fumbles), 0, 6),
+    firstDowns: nr(sum(home.firstDowns, away.firstDowns), 20, 65),
+    yards:      nr(sum(home.totalYards, away.totalYards), 350, 840),
   };
-  const weights = { turnovers: 0.40, firstDowns: 0.30, yards: 0.30 };
+  const weights = { points: 0.25, turnovers: 0.35, firstDowns: 0.20, yards: 0.20 };
   return weighted(stats, weights);
 }
 
 function weighted(stats, weights) {
-  const score = Math.round(
+  const score = Math.max(1, Math.round(
     Object.entries(weights).reduce((acc, [k, w]) => acc + (stats[k] || 0) * w, 0) * MAX_BONUS
-  );
+  ));
   return { score, breakdown: stats };
 }
 
@@ -82,7 +104,8 @@ const BY_SPORT = {
   epl: soccer, mls: soccer, ucl: soccer, nwsl: soccer,
   nhl,
   mlb,
-  nba, cbb: nba, wnba: nba, wcbb: nba,
+  nba, cbb: nba,
+  wnba, wcbb: wnba,
   nfl, cfb: nfl,
 };
 
@@ -93,7 +116,8 @@ export async function recordStatsBonus(game, statsSnapshot) {
   const compute = BY_SPORT[game.sport];
   if (!compute) return null;
 
-  const result = compute(statsSnapshot);
+  const totalScore = (game.home?.score ?? 0) + (game.away?.score ?? 0);
+  const result = compute(statsSnapshot, totalScore);
   const record = {
     t:         Date.now(),
     sport:     game.sport,

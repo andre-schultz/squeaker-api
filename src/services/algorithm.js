@@ -19,7 +19,7 @@ export function calcExcitement(
   wpDramaBonus = 0,
   upsetBonus = 0,
 ) {
-  const cls = closenessScore(margin, sport.margins, isOT);
+  const cls = closenessScore(margin, sport.margins, isOT, sport.closenessPoints);
   const otBonus       = isOT       ? 10 : 0;
   const comebackBonus = isComeback ? 10 : 0;
   const raw =
@@ -54,7 +54,7 @@ export function calcExcitementBreakdown(
   wpDramaBonus = 0,
   upsetBonus = 0,
 ) {
-  const cls = closenessScore(margin, sport.margins, isOT);
+  const cls = closenessScore(margin, sport.margins, isOT, sport.closenessPoints);
   const otBonus       = isOT       ? 10 : 0;
   const comebackBonus = isComeback ? 10 : 0;
   const raw =
@@ -84,12 +84,23 @@ export function calcExcitementBreakdown(
 // 0-75 ceiling, preserving the relative gap between tiers.
 // OT/extra-innings games are always max closeness — by definition the teams
 // were tied when regulation ended, regardless of the final margin.
-function closenessScore(margin, m, isOT = false) {
-  if (isOT)                return 75;
-  if (margin <= m.great)   return 75;
-  if (margin <= m.good)    return 56;
-  if (margin <= m.ok)      return 36;
-  if (margin <= m.blowout) return 12;
+// Sports can supply a closenessPoints table to shift the tier values without
+// touching the margin thresholds. Soccer uses this to spread its distribution:
+// draws still earn 75, but 1-goal wins earn 50 rather than 75, since low
+// margins are the norm in soccer rather than exceptional outcomes.
+function closenessScore(margin, m, isOT = false, pts = null) {
+  const drawPts    = pts?.draw    ?? 75;
+  const greatPts   = pts?.great   ?? 75;
+  const goodPts    = pts?.good    ?? 56;
+  const okPts      = pts?.ok      ?? 36;
+  const blowoutPts = pts?.blowout ?? 12;
+
+  if (isOT)                return drawPts;
+  if (margin === 0)        return drawPts;
+  if (margin <= m.great)   return greatPts;
+  if (margin <= m.good)    return goodPts;
+  if (margin <= m.ok)      return okPts;
+  if (margin <= m.blowout) return blowoutPts;
   return 0;
 }
 
