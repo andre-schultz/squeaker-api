@@ -34,19 +34,19 @@ export const SPORTS = {
     name: 'MLS', emoji: '⚽',
     espnSport: 'soccer', espnLeague: 'usa.1',
     margins: { great: 1, good: 2, ok: 3, blowout: 4 },
-    closenessPoints: { draw: 75, great: 50, good: 37, ok: 24, blowout: 8 },
+    closenessPoints: { draw: 60, great: 40, good: 30, ok: 19, blowout: 6 },
   },
   epl: {
     name: 'EPL', emoji: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
     espnSport: 'soccer', espnLeague: 'eng.1',
     margins: { great: 1, good: 2, ok: 3, blowout: 4 },
-    closenessPoints: { draw: 75, great: 50, good: 37, ok: 24, blowout: 8 },
+    closenessPoints: { draw: 60, great: 40, good: 30, ok: 19, blowout: 6 },
   },
   ucl: {
     name: 'Champions League', emoji: '⭐',
     espnSport: 'soccer', espnLeague: 'uefa.champions',
     margins: { great: 1, good: 2, ok: 3, blowout: 4 },
-    closenessPoints: { draw: 75, great: 50, good: 37, ok: 24, blowout: 8 },
+    closenessPoints: { draw: 60, great: 40, good: 30, ok: 19, blowout: 6 },
   },
   wnba: {
     name: 'WNBA', emoji: '🏀',
@@ -57,7 +57,7 @@ export const SPORTS = {
     name: 'NWSL', emoji: '⚽',
     espnSport: 'soccer', espnLeague: 'usa.nwsl',
     margins: { great: 1, good: 2, ok: 3, blowout: 4 },
-    closenessPoints: { draw: 75, great: 50, good: 37, ok: 24, blowout: 8 },
+    closenessPoints: { draw: 60, great: 40, good: 30, ok: 19, blowout: 6 },
   },
   wcbb: {
     name: "Women's College BB", emoji: '🏀',

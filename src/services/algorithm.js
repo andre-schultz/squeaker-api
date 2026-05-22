@@ -1,13 +1,14 @@
 // ── Excitement Score (0-100) ──────────────────────────────────────────────────
-// Closeness:        0-75 pts  (dominant factor; maxed automatically when isOT)
+// Closeness:        0-60 pts  (dominant factor; maxed automatically when isOT)
 // Comeback:          +10 pts
 // OT:                +10 pts
 // Momentum bonus:    +20 pts  (late goals, lead changes, time spent close)
-// WP-drama bonus:    +15 pts  (sport-windowed win-prob swings, late comebacks)
 // Upset bonus:       +10 pts  (underdog won outright)
+// Stats activity:   +15 pts  (computed from game stats snapshot)
 //
-// Theoretical raw max if all bonuses fire: 140. Clamped to 100 at the end.
+// Theoretical raw max if all bonuses fire: 125. Clamped to 100 at the end.
 // Bonuses are independent — each contributes its full value if earned.
+// WP-drama is tracked separately as part of the Action score, not here.
 
 export function calcExcitement(
   margin,
@@ -16,8 +17,8 @@ export function calcExcitement(
   sport,
   momentumBonus = 0,
   progress = 1.0,
-  wpDramaBonus = 0,
   upsetBonus = 0,
+  statsBonus = 0,
 ) {
   const cls = closenessScore(margin, sport.margins, isOT, sport.closenessPoints);
   const otBonus       = isOT       ? 10 : 0;
@@ -27,8 +28,8 @@ export function calcExcitement(
     otBonus +
     comebackBonus +
     momentumBonus +
-    wpDramaBonus +
-    upsetBonus;
+    upsetBonus +
+    statsBonus;
 
   // For live games, scale score by how far through the game we are.
   // A 0-0 tie in the 1st inning scores much lower than 0-0 in the 9th.
@@ -51,8 +52,8 @@ export function calcExcitementBreakdown(
   sport,
   momentumBonus = 0,
   progress = 1.0,
-  wpDramaBonus = 0,
   upsetBonus = 0,
+  statsBonus = 0,
 ) {
   const cls = closenessScore(margin, sport.margins, isOT, sport.closenessPoints);
   const otBonus       = isOT       ? 10 : 0;
@@ -62,8 +63,8 @@ export function calcExcitementBreakdown(
     otBonus +
     comebackBonus +
     momentumBonus +
-    wpDramaBonus +
-    upsetBonus;
+    upsetBonus +
+    statsBonus;
 
   const progressMultiplier = progress < 0.8 ? 0.3 + (progress / 0.8) * 0.7 : 1.0;
 
@@ -72,28 +73,28 @@ export function calcExcitementBreakdown(
     ot:         otBonus,
     comeback:   comebackBonus,
     momentum:   momentumBonus,
-    wp:         wpDramaBonus,
     upset:      upsetBonus,
+    stats:      statsBonus,
     raw,
     progressMultiplier,
     final:      Math.min(100, Math.round(raw * progressMultiplier)),
   };
 }
 
-// Closeness — proportionally rescaled from old 90/72/46/16/0 to fit a
-// 0-75 ceiling, preserving the relative gap between tiers.
+// Closeness — proportionally rescaled to fit a 0-60 ceiling, preserving
+// the relative gap between tiers.
 // OT/extra-innings games are always max closeness — by definition the teams
 // were tied when regulation ended, regardless of the final margin.
 // Sports can supply a closenessPoints table to shift the tier values without
 // touching the margin thresholds. Soccer uses this to spread its distribution:
-// draws still earn 75, but 1-goal wins earn 50 rather than 75, since low
+// draws still earn 60, but 1-goal wins earn 40 rather than 60, since low
 // margins are the norm in soccer rather than exceptional outcomes.
 function closenessScore(margin, m, isOT = false, pts = null) {
-  const drawPts    = pts?.draw    ?? 75;
-  const greatPts   = pts?.great   ?? 75;
-  const goodPts    = pts?.good    ?? 56;
-  const okPts      = pts?.ok      ?? 36;
-  const blowoutPts = pts?.blowout ?? 12;
+  const drawPts    = pts?.draw    ?? 60;
+  const greatPts   = pts?.great   ?? 60;
+  const goodPts    = pts?.good    ?? 45;
+  const okPts      = pts?.ok      ?? 29;
+  const blowoutPts = pts?.blowout ?? 10;
 
   if (isOT)                return drawPts;
   if (margin === 0)        return drawPts;

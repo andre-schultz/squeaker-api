@@ -1,8 +1,8 @@
-// Win-probability tracking + drama analysis.
+// Win-probability tracking.
 //
 // We pull the latest WP from ESPN's core API per live game per cycle and
-// append to a per-game timeline. Drama is detected by sliding a sport-tuned
-// window over the timeline and counting big WP swings + late comebacks.
+// append to a per-game timeline. The timeline feeds the live-action buzz
+// score and the upset bonus.
 //
 // Soccer (mls/epl/ucl) is intentionally skipped — ESPN doesn't expose WP
 // for soccer. NHL coverage is patchy; if a fetch returns nothing we
@@ -63,63 +63,6 @@ export async function recordWPSnapshot(game, espnSport, espnLeague) {
 
 export async function getWPTimeline(gameId) {
   return (await getCache(`probabilities:${gameId}`)) || [];
-}
-
-// Drama analysis. Returns { dramaBonus, signals, maxSwing }.
-// Compares each snapshot to the previous one — effectively the polling interval
-// (~3 min real time). No window needed since sampling is already consistent.
-export function analyzeWPDrama(timeline, sport) {
-  if (!timeline || timeline.length < 2) {
-    return { dramaBonus: 0, signals: [], maxSwing: 0 };
-  }
-  if (!WP_WINDOW_MS[sport]) return { dramaBonus: 0, signals: [], maxSwing: 0 };
-
-  let maxSwing = 0;
-  let bigSwingCount = 0;
-
-  for (let i = 1; i < timeline.length; i++) {
-    const swing = Math.abs(timeline[i].homeWP - timeline[i - 1].homeWP);
-    if (swing > maxSwing) maxSwing = swing;
-    if (swing >= 0.25) bigSwingCount++;
-  }
-
-  // Late comeback: did the eventual winner's WP dip ≤20% in the final 25%?
-  const first = timeline[0];
-  const last = timeline[timeline.length - 1];
-  const duration = last.t - first.t;
-  const lateStart = last.t - duration * 0.25;
-  const winnerHome = last.homeWP > 0.5;
-
-  let winnerWPmin = 1.0;
-  for (const s of timeline) {
-    if (s.t < lateStart) continue;
-    const wp = winnerHome ? s.homeWP : s.awayWP;
-    if (wp < winnerWPmin) winnerWPmin = wp;
-  }
-
-  // Score
-  let dramaBonus = 0;
-  const signals = [];
-
-  const swingBonus = Math.min(9, bigSwingCount * 3);
-  if (swingBonus > 0) {
-    dramaBonus += swingBonus;
-    signals.push(`${bigSwingCount} dramatic WP swing(s)`);
-  }
-  if (maxSwing >= 0.4) {
-    dramaBonus += 5;
-    signals.push('Game-defining WP flip');
-  }
-  if (winnerWPmin <= 0.20 && timeline.length > 4) {
-    dramaBonus += 8;
-    signals.push(`Late comeback (winner dipped to ${Math.round(winnerWPmin * 100)}% WP)`);
-  }
-
-  return {
-    dramaBonus: Math.min(15, dramaBonus),
-    signals,
-    maxSwing,
-  };
 }
 
 // "Live action" score — how exciting is the game RIGHT NOW. Looks at WP

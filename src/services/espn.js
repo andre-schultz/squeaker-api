@@ -6,7 +6,6 @@ import { calcExcitement, calcExcitementBreakdown, detectComeback, excitementDesc
 import { recordSnapshot, getTimeline, analyzeMomentum } from './timeline.js';
 import {
   recordWPSnapshot,
-  analyzeWPDrama,
   analyzeUpset,
   computeLiveActionBuzz,
 } from './probabilities.js';
@@ -179,7 +178,6 @@ async function parseEvent(ev, sportKey, cfg) {
   // Append to the per-game WP timeline (no-op for soccer / pre-game).
   // Then run sport-windowed drama + upset analysis on the full timeline.
   const wpTimeline = await recordWPSnapshot(partialGame, cfg.espnSport, cfg.espnLeague);
-  const { dramaBonus, signals: wpSignals, maxSwing } = analyzeWPDrama(wpTimeline, sportKey);
   let { upsetBonus, winnerPreGameWP } = analyzeUpset(wpTimeline, {
     ...partialGame,
     home: { ...partialGame.home, score: homeScore },
@@ -222,6 +220,10 @@ async function parseEvent(ev, sportKey, cfg) {
     await setCache(peakKey, liveActionBuzz, CACHE_TTL.liveActionPeak);
   }
 
+  // Fetch latest stats-activity bonus (written by the stats cycle, 0 if not yet available)
+  const statsBonusRecord = await getStatsBonus(ev.id);
+  const statsBonus = statsBonusRecord?.score ?? 0;
+
   // For live games, scale by progress so early-game close scores don't rank too high
   const excitement = calcExcitement(
     margin,
@@ -230,8 +232,8 @@ async function parseEvent(ev, sportKey, cfg) {
     cfg,
     momentumBonus,
     live ? progress : 1.0,
-    dramaBonus,
     upsetBonus,
+    statsBonus,
   );
 
   const mkTeam = (T, score, winner) => ({
@@ -256,10 +258,8 @@ async function parseEvent(ev, sportKey, cfg) {
     isComeback,
     momentumBonus,
     momentumSignals: signals,
-    wpDramaBonus:    dramaBonus,
-    wpDramaSignals:  wpSignals,
-    wpMaxSwing:      maxSwing,
     upsetBonus,
+    statsBonus,
     winnerPreGameWP,
     progress,
     gameStage:       rawDetail,
@@ -279,20 +279,18 @@ async function parseEvent(ev, sportKey, cfg) {
   if (AUDIT_ENABLED) {
     const breakdown = calcExcitementBreakdown(
       margin, isOT, isComeback, cfg, momentumBonus,
-      live ? progress : 1.0, dramaBonus, upsetBonus,
+      live ? progress : 1.0, upsetBonus, statsBonus,
     );
-    const statsBonus = await getStatsBonus(ev.id);
     await recordAudit(game, {
       momentum:   { bonus: momentumBonus, signals },
-      wp:         { bonus: dramaBonus, signals: wpSignals, maxSwing },
       upset:      { bonus: upsetBonus, winnerPreGameWP },
       liveAction: {
         current:   currentLiveActionBuzz,
         peak:      liveActionBuzz,
         breakdown: liveActionRaw,
       },
-      statsActivity: statsBonus
-        ? { score: statsBonus.score, breakdown: statsBonus.breakdown }
+      statsActivity: statsBonusRecord
+        ? { score: statsBonusRecord.score, breakdown: statsBonusRecord.breakdown }
         : null,
       excitement: breakdown,
     });
