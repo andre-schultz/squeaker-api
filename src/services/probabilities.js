@@ -1,134 +1,139 @@
 // Win-probability tracking.
 //
-// We pull the latest WP from ESPN's core API per live game per cycle and
-// append to a per-game timeline. The timeline feeds the live-action buzz
-// score and the upset bonus.
+// Each cycle we fetch ESPN's full play-by-play WP history for every live or
+// recently-finished game and store it (filtered to entries where WP actually
+// moved). Using the full history rather than our own 3-minute polling gives
+// a richer action signal — every at-bat, power play, or possession that
+// shifted the line is captured.
 //
-// Soccer (mls/epl/ucl) is intentionally skipped — ESPN doesn't expose WP
-// for soccer. NHL coverage is patchy; if a fetch returns nothing we
+// Soccer (mls/epl/ucl/nwsl) is intentionally skipped — ESPN doesn't expose
+// WP for soccer. NHL coverage is patchy; if a fetch returns nothing we
 // silently no-op.
 
 import { setCache, getCache } from './cache.js';
 import { CACHE_TTL, WP_WINDOW_MS } from '../config.js';
 
-const CORE = 'https://sports.core.api.espn.com/v2/sports';
+const CORE    = 'https://sports.core.api.espn.com/v2/sports';
 const HEADERS = { 'User-Agent': 'Squeaker/1.0' };
+const PAGE_SIZE = 300; // entries per ESPN probabilities page; most games fit in 1–2 pages
 
-// In-memory set of done games we've already snapshotted in this process.
-// Once a game is final, its WP timeline is locked — re-polling ESPN and
-// re-reading Upstash on every cycle is wasted work. The set resets on
-// container restart, which is fine: the next first-cycle re-captures and
-// dedup at the snapshot layer prevents duplicate writes.
+// In-memory set of done games already fetched in this process.
+// Once a game is final its WP history is frozen — re-fetching all pages from
+// ESPN every cycle is wasted work. Resets on container restart; the
+// dedup filter prevents duplicate writes on the first re-fetch.
 const doneSnapshotted = new Set();
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
-// Fetch current WP for a game and append to the timeline. Returns the
-// updated timeline (or existing one if no fetch was made).
-export async function recordWPSnapshot(game, espnSport, espnLeague) {
-  // Skip sports we don't track WP for
+// Fetch ESPN's full play-by-play WP history for a game and store it.
+// Filters out entries where WP didn't actually change to keep the timeline
+// clean (ESPN includes many no-change filler entries).
+// Returns the filtered timeline, or the cached one if nothing changed.
+export async function fetchAndStoreWPTimeline(game, espnSport, espnLeague) {
   if (!WP_WINDOW_MS[game.sport]) return null;
-  // Skip pre-game / unknown
   if (!game.live && !game.done) return null;
-  // Done games only need to be polled once for their final state
-  if (game.done && doneSnapshotted.has(game.id)) return null;
+  if (game.done && doneSnapshotted.has(game.id)) return getWPTimeline(game.id);
 
-  const current = await fetchCurrentWP(espnSport, espnLeague, game.id);
-  if (!current) return await getWPTimeline(game.id);
+  const raw = await fetchFullESPNTimeline(espnSport, espnLeague, game.id);
+  if (!raw.length) return await getWPTimeline(game.id);
 
-  const key = `probabilities:${game.id}`;
-  const timeline = (await getCache(key)) || [];
-
-  const last = timeline[timeline.length - 1];
-  // Only append if WP changed by > 0.5% OR > 60s elapsed (keep timeline thin)
-  if (last) {
-    const dt = Date.now() - last.t;
-    const dwp = Math.abs(current.homeWP - last.homeWP);
-    if (dwp < 0.005 && dt < 60_000) return timeline;
+  // Filter to entries where homeWP actually moved (removes filler no-change entries)
+  const filtered = [];
+  for (const entry of raw) {
+    const prev = filtered[filtered.length - 1];
+    if (!prev || Math.abs(entry.homeWP - prev.homeWP) >= 0.001) {
+      filtered.push({ homeWP: entry.homeWP, awayWP: entry.awayWP });
+    }
   }
 
-  const snapshot = {
-    t: Date.now(),
-    homeWP: current.homeWP,
-    awayWP: current.awayWP,
-  };
-  timeline.push(snapshot);
-  await setCache(key, timeline, CACHE_TTL.probabilities);
+  if (filtered.length) {
+    await setCache(`probabilities:${game.id}`, filtered, CACHE_TTL.probabilities);
+  }
 
-  // After capturing a done game once, mark it so we never poll again.
   if (game.done) doneSnapshotted.add(game.id);
-
-  return timeline;
+  return filtered;
 }
 
 export async function getWPTimeline(gameId) {
   return (await getCache(`probabilities:${gameId}`)) || [];
 }
 
-// "Live action" score — how exciting is the game RIGHT NOW. Looks at WP
-// movement in the recent window only, combining three factors:
+// ── Action score ──────────────────────────────────────────────────────────────
 //
-//   • totalSwing       — sum of |Δ WP| across all samples in window
-//                        (proxies "how much the game flipped")
-//   • maxSingleSwing   — biggest single-step Δ in window
-//                        (proxies "did one big play just happen")
-//   • directionChanges — count of WP direction reversals
-//                        (proxies "back-and-forth chaos")
+// Rate-based formula computed from ESPN's full play-by-play WP timeline.
+// All three components are normalised by sample count so the score is
+// sport-agnostic — a tense basketball game and a tense baseball game with
+// very different play frequencies are judged on intensity per play, not
+// total volume.
 //
-// All three blend into a 0-100 score capped at 100. Returns the breakdown
-// alongside the score so audit logs capture enough to fine-tune later.
+//   avgSwing     — mean |Δ homeWP| per entry. Captures how much each play
+//                  moved the needle on average.
+//   consecRate   — fraction of adjacent entry-pairs where BOTH deltas exceed
+//                  SWING_THRESHOLD. Detects sustained hot streaks.
+//   semiRate     — fraction of entry-pairs two steps apart where BOTH exceed
+//                  SWING_THRESHOLD. Detects volatile back-and-forth with
+//                  brief pauses between big plays.
 //
-// Returns 0 for done games / empty timelines / pre-game (no recent WP).
-export function computeLiveActionBuzz(timeline) {
+// Sport-specific multipliers. Each sport has different per-play WP dynamics
+// (a baseball at-bat moves the needle more than a basketball possession), so
+// a single set of multipliers produces skewed cross-sport distributions.
+// All sports share the same SWING_THRESHOLD and formula shape; only the
+// weights differ so scores are calibrated within each sport's natural range.
+// CBB and WCBB intentionally skew low — most games are mismatches — but
+// competitive games still reach the high end.
+export const SWING_THRESHOLD = 0.03;
+
+export const ACTION_MULTIPLIERS = {
+  mlb:  { avgSwing: 800,  consecRate: 60,  semiRate: 40 },
+  nba:  { avgSwing: 1200, consecRate: 90,  semiRate: 60 },
+  wnba: { avgSwing: 1200, consecRate: 90,  semiRate: 60 },
+  nfl:  { avgSwing: 1400, consecRate: 110, semiRate: 70 },
+  cfb:  { avgSwing: 1300, consecRate: 100, semiRate: 65 },
+  nhl:  { avgSwing: 1100, consecRate: 85,  semiRate: 55 },
+  cbb:  { avgSwing: 1600, consecRate: 120, semiRate: 80 },
+  wcbb: { avgSwing: 1600, consecRate: 120, semiRate: 80 },
+};
+
+export function computeActionScore(timeline, sport) {
+  const m = ACTION_MULTIPLIERS[sport] ?? ACTION_MULTIPLIERS.mlb;
   const result = {
     score: 0,
-    totalSwing: 0,
-    maxSingleSwing: 0,
-    directionChanges: 0,
-    windowSamples: 0,
-    windowMs: LIVE_ACTION_WINDOW_MS,
+    avgSwing: 0,
+    consecRate: 0,
+    semiRate: 0,
+    samples: timeline?.length ?? 0,
   };
 
   if (!timeline || timeline.length < 2) return result;
 
-  const now = Date.now();
-  const recent = [];
-  for (const s of timeline) {
-    if (now - s.t < LIVE_ACTION_WINDOW_MS) recent.push(s);
-  }
-  result.windowSamples = recent.length;
-  if (recent.length < 2) return result;
-
-  let lastDir = 0;
-  for (let i = 1; i < recent.length; i++) {
-    const delta = recent[i].homeWP - recent[i - 1].homeWP;
-    const absDelta = Math.abs(delta);
-    result.totalSwing += absDelta;
-    if (absDelta > result.maxSingleSwing) result.maxSingleSwing = absDelta;
-
-    const dir = delta > 0 ? 1 : delta < 0 ? -1 : 0;
-    if (dir !== 0) {
-      if (lastDir !== 0 && dir !== lastDir) result.directionChanges++;
-      lastDir = dir;
-    }
+  const deltas = [];
+  for (let i = 1; i < timeline.length; i++) {
+    deltas.push(Math.abs(timeline[i].homeWP - timeline[i - 1].homeWP));
   }
 
-  // 0-100 composite. Calibration targets assume ~4 samples per 10-min window
-  // (ESPN WP updates every ~9 min), so thresholds are set accordingly:
-  //   totalSwing × 80   →  64 pts at 0.80 cumulative WP movement
-  //   maxSingle  × 60   →  30 pts at 0.50 max single-step swing
-  //   reversals  × 5    →  10 pts at 2 direction changes (max possible w/ 4 samples)
-  // A walk-off or extreme late swing (0.80+ single) hits ~100.
-  // A single big play (0.30 swing) lands ~40. A quiet stretch stays near 0.
+  const n = deltas.length;
+  result.avgSwing = deltas.reduce((a, b) => a + b, 0) / n;
+
+  let consecCount = 0;
+  for (let i = 1; i < n; i++) {
+    if (deltas[i] >= SWING_THRESHOLD && deltas[i - 1] >= SWING_THRESHOLD) consecCount++;
+  }
+  result.consecRate = n > 1 ? consecCount / (n - 1) : 0;
+
+  let semiCount = 0;
+  for (let i = 2; i < n; i++) {
+    if (deltas[i] >= SWING_THRESHOLD && deltas[i - 2] >= SWING_THRESHOLD) semiCount++;
+  }
+  result.semiRate = n > 2 ? semiCount / (n - 2) : 0;
+
   const raw =
-    result.totalSwing * 80 +
-    result.maxSingleSwing * 60 +
-    result.directionChanges * 5;
+    result.avgSwing   * m.avgSwing +
+    result.consecRate * m.consecRate +
+    result.semiRate   * m.semiRate;
+
   result.score = Math.min(100, Math.round(raw));
   return result;
 }
-
-const LIVE_ACTION_WINDOW_MS = 10 * 60 * 1000; // last 10 minutes
 
 // Did an underdog win? Returns { upsetBonus, winnerPreGameWP }.
 // Bonus scales linearly: 50% pre-game WP → 0, 0% → 10.
@@ -136,8 +141,8 @@ export function analyzeUpset(timeline, game) {
   if (!timeline || timeline.length === 0 || !game.done) {
     return { upsetBonus: 0, winnerPreGameWP: null };
   }
-  const winnerHome = game.home.score > game.away.score;
-  const earliest = timeline[0];
+  const winnerHome      = game.home.score > game.away.score;
+  const earliest        = timeline[0];
   const winnerPreGameWP = winnerHome ? earliest.homeWP : earliest.awayWP;
   if (winnerPreGameWP > 0.5) return { upsetBonus: 0, winnerPreGameWP };
 
@@ -147,61 +152,46 @@ export function analyzeUpset(timeline, game) {
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-// Fetch the latest probability entry for a game from ESPN's core API.
-// Returns { homeWP, awayWP } in [0,1], or null on miss.
-async function fetchCurrentWP(espnSport, espnLeague, eventId) {
-  // Pull most-recent first; limit small so we don't waste bandwidth
-  const url = `${CORE}/${espnSport}/leagues/${espnLeague}/events/${eventId}/competitions/${eventId}/probabilities?limit=1&page=1`;
-  let res;
-  try {
-    res = await fetch(url, { headers: HEADERS });
-  } catch (e) {
-    return null;
-  }
-  if (!res.ok) {
-    try { await res.text(); } catch {}
-    return null;
-  }
+// Fetch all pages of ESPN's play-by-play probability history for a game.
+// Returns [{ homeWP, awayWP }, …] in chronological order, or [] on failure.
+async function fetchFullESPNTimeline(espnSport, espnLeague, eventId) {
+  const base = `${CORE}/${espnSport}/leagues/${espnLeague}/events/${eventId}/competitions/${eventId}/probabilities`;
 
   let data;
   try {
+    const res = await fetch(`${base}?limit=${PAGE_SIZE}&page=1`, { headers: HEADERS });
+    if (!res.ok) { try { await res.text(); } catch {} return []; }
     data = await res.json();
-  } catch {
-    return null;
-  }
+  } catch { return []; }
 
-  // First page returns the OLDEST entries; we need the latest. Use the
-  // pageCount to fetch the last page.
-  const pageCount = data?.pageCount || 1;
+  if (!data?.items?.length) return [];
+
+  const pageCount = data.pageCount || 1;
+  const allItems  = [...data.items];
+
   if (pageCount > 1) {
-    const lastUrl = `${CORE}/${espnSport}/leagues/${espnLeague}/events/${eventId}/competitions/${eventId}/probabilities?limit=1&page=${pageCount}`;
-    try {
-      const last = await fetch(lastUrl, { headers: HEADERS });
-      if (!last.ok) {
-        try { await last.text(); } catch {}
-      } else {
-        data = await last.json();
-      }
-    } catch {
-      /* fall through with first-page data */
+    const pages = await Promise.all(
+      Array.from({ length: pageCount - 1 }, (_, i) =>
+        fetch(`${base}?limit=${PAGE_SIZE}&page=${i + 2}`, { headers: HEADERS })
+          .then(r => r.ok ? r.json() : null)
+          .catch(() => null)
+      )
+    );
+    for (const page of pages) {
+      if (page?.items) allItems.push(...page.items);
     }
   }
 
-  const entry = data?.items?.[0];
-  if (!entry) return null;
-
-  // ESPN returns probabilities as homeWinPercentage / awayWinPercentage.
-  // Both are 0–1 floats.
-  const homeWP = clamp01(entry.homeWinPercentage);
-  const awayWP = clamp01(entry.awayWinPercentage);
-  if (homeWP == null || awayWP == null) return null;
-
-  return { homeWP, awayWP };
+  return allItems
+    .filter(e => e.homeWinPercentage != null && e.awayWinPercentage != null)
+    .map(e => ({
+      homeWP: clamp01(e.homeWinPercentage),
+      awayWP: clamp01(e.awayWinPercentage),
+    }))
+    .filter(e => e.homeWP != null && e.awayWP != null);
 }
 
 function clamp01(x) {
   if (typeof x !== 'number' || isNaN(x)) return null;
-  if (x < 0) return 0;
-  if (x > 1) return 1;
-  return x;
+  return Math.max(0, Math.min(1, x));
 }

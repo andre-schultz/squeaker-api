@@ -72,7 +72,6 @@ export const CACHE_TTL = {
   finishedGames: 600,    // 10 min — finished games
   probabilities:  7 * 24 * 3600, // 7 days — WP timeline, mirrors score timeline
   frozenOdds:     7 * 24 * 3600, // 7 days — pre-game line, fetched once
-  liveActionPeak: 7 * 24 * 3600, // 7 days — peak live-action score per game
   audit:          3 * 24 * 3600, // 3 days — algorithm audit log
   oddsTimeline:   7 * 24 * 3600, // 7 days — SGO live-odds WP timeline
   bettingPeak:    7 * 24 * 3600, // 7 days — peak betting score per game

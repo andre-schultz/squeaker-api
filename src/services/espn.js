@@ -5,9 +5,9 @@ import { SPORTS, HOURS_WINDOW, CACHE_TTL, AUDIT_ENABLED } from '../config.js';
 import { calcExcitement, calcExcitementBreakdown, detectComeback, excitementDesc } from './algorithm.js';
 import { recordSnapshot, getTimeline, analyzeMomentum } from './timeline.js';
 import {
-  recordWPSnapshot,
+  fetchAndStoreWPTimeline,
   analyzeUpset,
-  computeLiveActionBuzz,
+  computeActionScore,
 } from './probabilities.js';
 import { getOrFetchOdds } from './odds.js';
 import { recordAudit } from './audit.js';
@@ -175,9 +175,9 @@ async function parseEvent(ev, sportKey, cfg) {
   const { momentumBonus, signals } = analyzeMomentum(timeline, { sport: sportKey });
 
   // ── Win-probability signal ──────────────────────────────────────────
-  // Append to the per-game WP timeline (no-op for soccer / pre-game).
-  // Then run sport-windowed drama + upset analysis on the full timeline.
-  const wpTimeline = await recordWPSnapshot(partialGame, cfg.espnSport, cfg.espnLeague);
+  // Fetch ESPN's full play-by-play WP history and store it (no-op for
+  // soccer / pre-game). All downstream analysis runs on this richer dataset.
+  const wpTimeline = await fetchAndStoreWPTimeline(partialGame, cfg.espnSport, cfg.espnLeague);
   let { upsetBonus, winnerPreGameWP } = analyzeUpset(wpTimeline, {
     ...partialGame,
     home: { ...partialGame.home, score: homeScore },
@@ -204,21 +204,12 @@ async function parseEvent(ev, sportKey, cfg) {
     }
   }
 
-  // ── Live-action score from recent WP volatility ──────────────────────
-  // Two fields exposed:
-  //   currentLiveActionBuzz — real-time signal, 0 when not live. Reflects
-  //                           the last 10 minutes of WP swings.
-  //   liveActionBuzz        — peak across the game's lifetime. Once a
-  //                           game has had a wild moment, it stays
-  //                           memorialized. Frozen after game ends.
-  const liveActionRaw = live ? computeLiveActionBuzz(wpTimeline) : null;
-  const currentLiveActionBuzz = liveActionRaw?.score ?? 0;
-  const peakKey = `liveActionPeak:${ev.id}`;
-  const cachedPeak = (await getCache(peakKey)) || 0;
-  const liveActionBuzz = Math.max(cachedPeak, currentLiveActionBuzz);
-  if (liveActionBuzz > cachedPeak) {
-    await setCache(peakKey, liveActionBuzz, CACHE_TTL.liveActionPeak);
-  }
+  // ── Action score from full WP history ────────────────────────────────
+  // Computed across the entire WP timeline, not just a recent window.
+  // Non-zero only while the game is live; the frozen game object retains
+  // whatever score was last computed before the game ended.
+  const actionRaw = live ? computeActionScore(wpTimeline, sportKey) : null;
+  const currentLiveActionBuzz = actionRaw?.score ?? 0;
 
   // Fetch latest stats-activity bonus (written by the stats cycle, 0 if not yet available)
   const statsBonusRecord = await getStatsBonus(ev.id);
@@ -269,8 +260,7 @@ async function parseEvent(ev, sportKey, cfg) {
     desc:            excitementDesc(margin, isOT, isComeback, cfg),
     date:            ev.date,
     odds,                     // frozen pre-game line for display
-    liveActionBuzz,           // 0-100, peak across whole game (sticky)
-    currentLiveActionBuzz,    // 0-100, real-time, 0 when not live
+    currentLiveActionBuzz,    // 0-100, computed from full WP history, 0 when not live
   };
 
   // ── Audit snapshot — captures everything that affects the excitement
@@ -286,8 +276,7 @@ async function parseEvent(ev, sportKey, cfg) {
       upset:      { bonus: upsetBonus, winnerPreGameWP },
       liveAction: {
         current:   currentLiveActionBuzz,
-        peak:      liveActionBuzz,
-        breakdown: liveActionRaw,
+        breakdown: actionRaw,
       },
       statsActivity: statsBonusRecord
         ? { score: statsBonusRecord.score, breakdown: statsBonusRecord.breakdown }

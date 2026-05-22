@@ -61,9 +61,9 @@ function nba(s, totalScore) {
   const { home, away } = s;
   const THREE_KEY = 'threePointFieldGoalsMade-threePointFieldGoalsAttempted';
   const stats = {
-    points:        nr(totalScore, 200, 260),
-    threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 15, 40),
-    stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 15, 40),
+    points:        nr(totalScore, 211, 250),
+    threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 20, 31),
+    stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 20, 31),
   };
   const weights = { points: 0.20, threePointers: 0.45, stealsBlocks: 0.35 };
   return weighted(stats, weights);
@@ -73,9 +73,33 @@ function wnba(s, totalScore) {
   const { home, away } = s;
   const THREE_KEY = 'threePointFieldGoalsMade-threePointFieldGoalsAttempted';
   const stats = {
-    points:        nr(totalScore, 140, 200),
-    threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 8, 22),
-    stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 12, 30),
+    points:        nr(totalScore, 140, 180),
+    threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 10, 21),
+    stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 17, 26),
+  };
+  const weights = { points: 0.20, threePointers: 0.45, stealsBlocks: 0.35 };
+  return weighted(stats, weights);
+}
+
+function cbb(s, totalScore) {
+  const { home, away } = s;
+  const THREE_KEY = 'threePointFieldGoalsMade-threePointFieldGoalsAttempted';
+  const stats = {
+    points:        nr(totalScore, 131, 169),
+    threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 12, 20),
+    stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 14, 25),
+  };
+  const weights = { points: 0.20, threePointers: 0.45, stealsBlocks: 0.35 };
+  return weighted(stats, weights);
+}
+
+function wcbb(s, totalScore) {
+  const { home, away } = s;
+  const THREE_KEY = 'threePointFieldGoalsMade-threePointFieldGoalsAttempted';
+  const stats = {
+    points:        nr(totalScore, 116, 154),
+    threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 8, 17),
+    stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 17, 30),
   };
   const weights = { points: 0.20, threePointers: 0.45, stealsBlocks: 0.35 };
   return weighted(stats, weights);
@@ -84,10 +108,22 @@ function wnba(s, totalScore) {
 function nfl(s, totalScore) {
   const { home, away } = s;
   const stats = {
-    points:     nr(totalScore, 3, 65),
-    turnovers:  nr(sum(home.interceptions, away.interceptions) + sum(home.fumbles, away.fumbles), 0, 6),
-    firstDowns: nr(sum(home.firstDowns, away.firstDowns), 20, 65),
-    yards:      nr(sum(home.totalYards, away.totalYards), 350, 840),
+    points:     nr(totalScore, 25, 57),
+    turnovers:  nr(sum(home.interceptions, away.interceptions) + sum(home.fumbles, away.fumbles), 0, 3),
+    firstDowns: nr(sum(home.firstDowns, away.firstDowns), 28, 46),
+    yards:      nr(sum(home.totalYards, away.totalYards), 480, 770),
+  };
+  const weights = { points: 0.25, turnovers: 0.35, firstDowns: 0.20, yards: 0.20 };
+  return weighted(stats, weights);
+}
+
+function cfb(s, totalScore) {
+  const { home, away } = s;
+  const stats = {
+    points:     nr(totalScore, 28, 67),
+    turnovers:  nr(sum(home.interceptions, away.interceptions) + sum(home.fumbles, away.fumbles), 0, 3),
+    firstDowns: nr(sum(home.firstDowns, away.firstDowns), 29, 46),
+    yards:      nr(sum(home.totalYards, away.totalYards), 550, 875),
   };
   const weights = { points: 0.25, turnovers: 0.35, firstDowns: 0.20, yards: 0.20 };
   return weighted(stats, weights);
@@ -104,9 +140,12 @@ const BY_SPORT = {
   epl: soccer, mls: soccer, ucl: soccer, nwsl: soccer,
   nhl,
   mlb,
-  nba, cbb: nba,
-  wnba, wcbb: wnba,
-  nfl, cfb: nfl,
+  nba,
+  wnba,
+  cbb,
+  wcbb,
+  nfl,
+  cfb,
 };
 
 // Compute activity bonus from a stats snapshot and store to Redis.

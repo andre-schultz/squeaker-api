@@ -6,7 +6,7 @@
 // doesn't expose live in-play movement publicly, so polling repeatedly
 // returns the same closing line — pointless work. The "is this game
 // exciting right now?" signal comes from win-probability volatility
-// (see liveActionBuzz in probabilities.js) instead.
+// (see currentLiveActionBuzz in probabilities.js) instead.
 
 import { setCache, getCache } from './cache.js';
 import { CACHE_TTL } from '../config.js';
