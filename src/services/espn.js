@@ -165,6 +165,7 @@ async function parseEvent(ev, sportKey, cfg) {
   const partialGame = {
     id: ev.id, sport: sportKey,
     home: { score: homeScore }, away: { score: awayScore },
+    progress,
     live, done,
   };
 

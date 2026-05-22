@@ -15,11 +15,12 @@ export async function recordSnapshot(game) {
   if (latest && latest.home === homeScore && latest.away === awayScore) return existing;
 
   const snapshot = {
-    t:    Date.now(),           // timestamp
-    home: homeScore,
-    away: awayScore,
-    live: game.live,
-    done: game.done,
+    t:        Date.now(),       // timestamp
+    home:     homeScore,
+    away:     awayScore,
+    progress: game.progress ?? null,
+    live:     game.live,
+    done:     game.done,
   };
 
   const updated = [...existing, snapshot];
@@ -32,6 +33,29 @@ export async function getTimeline(gameId) {
   return await getCache(`timeline:${gameId}`) || [];
 }
 
+// Progress threshold above which a score counts as "late" for each sport.
+// Based on game structure, not wall-clock time:
+//   MLB  — start of 8th inning  (7 complete innings / 9)
+//   NHL  — start of 3rd period  (2 complete periods / 3)
+//   NBA/WNBA — start of 4th quarter (3 complete quarters / 4 = 0.75)
+//   NFL/CFB  — start of 4th quarter
+//   CBB/WCBB — 2nd half, past midpoint (0.75 of two 20-min halves)
+//   Soccer   — 70th minute (70 / 90)
+const LATE_THRESHOLD = {
+  mlb:  7 / 9,   // ≈ 0.778
+  nhl:  2 / 3,   // ≈ 0.667
+  nba:  0.75,
+  wnba: 0.75,
+  nfl:  0.75,
+  cfb:  0.75,
+  cbb:  0.75,
+  wcbb: 0.75,
+  mls:  70 / 90, // ≈ 0.778
+  epl:  70 / 90,
+  ucl:  70 / 90,
+  nwsl: 70 / 90,
+};
+
 // Analyze timeline to produce momentum scoring signals
 export function analyzeMomentum(timeline, sport) {
   if (!timeline || timeline.length < 2) {
@@ -41,11 +65,12 @@ export function analyzeMomentum(timeline, sport) {
   const signals  = [];
   let bonus      = 0;
 
+  const sportKey   = sport?.sport || sport;
+  const lateThreshold = LATE_THRESHOLD[sportKey] ?? 0.75;
+
   const first    = timeline[0];
   const last     = timeline[timeline.length - 1];
-  const duration = last.t - first.t; // total time tracked in ms
-  const lateWindow = duration * 0.25; // last 25% of game = "late"
-  const lateStart  = last.t - lateWindow;
+  const duration = last.t - first.t; // total time tracked in ms (used for tied/close %)
 
   let leadChanges    = 0;
   let tiedDuration   = 0;
@@ -59,7 +84,13 @@ export function analyzeMomentum(timeline, sport) {
     const segMs   = curr.t - prev.t;
     const margin  = Math.abs(curr.home - curr.away);
     const leader  = getLeader(curr.home, curr.away);
-    const isLate  = curr.t >= lateStart;
+
+    // A snapshot is "late" when its stored progress meets the sport threshold.
+    // Fall back to the old time-based heuristic for snapshots written before
+    // progress was added to the schema (curr.progress === null/undefined).
+    const isLate = curr.progress != null
+      ? curr.progress >= lateThreshold
+      : curr.t >= (last.t - duration * 0.25);
 
     // Track time spent tied
     if (margin === 0) tiedDuration += segMs;
