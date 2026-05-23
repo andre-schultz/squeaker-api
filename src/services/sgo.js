@@ -91,12 +91,17 @@ async function fetchLeague(leagueID, limit = null) {
     return [];
   }
   if (!res.ok) {
-    try { await res.text(); } catch {}
+    let body = '';
+    try { body = await res.text(); } catch {}
+    console.warn(`[sgo] fetchLeague ${leagueID} → HTTP ${res.status}: ${body.slice(0, 200)}`);
     return [];
   }
   let data;
   try { data = await res.json(); } catch { return []; }
-  if (!data?.success || !Array.isArray(data.data)) return [];
+  if (!data?.success || !Array.isArray(data.data)) {
+    console.warn(`[sgo] fetchLeague ${leagueID} → unexpected response: success=${data?.success} message=${data?.message ?? '(none)'}`);
+    return [];
+  }
   return data.data;
 }
 
