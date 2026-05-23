@@ -206,9 +206,9 @@ async function parseEvent(ev, sportKey, cfg) {
 
   // ── Action score from full WP history ────────────────────────────────
   // Computed across the entire WP timeline, not just a recent window.
-  // Non-zero only while the game is live; the frozen game object retains
-  // whatever score was last computed before the game ended.
-  const actionRaw = live ? computeActionScore(wpTimeline, sportKey) : null;
+  // Computed for both live and just-finished games so the frozen game
+  // object retains the last real value rather than zero.
+  const actionRaw = (live || done) ? computeActionScore(wpTimeline, sportKey) : null;
   const currentLiveActionBuzz = actionRaw?.score ?? 0;
 
   // Fetch latest stats-activity bonus (written by the stats cycle, 0 if not yet available)
@@ -260,7 +260,7 @@ async function parseEvent(ev, sportKey, cfg) {
     desc:            excitementDesc(margin, isOT, isComeback, cfg),
     date:            ev.date,
     odds,                     // frozen pre-game line for display
-    currentLiveActionBuzz,    // 0-100, computed from full WP history, 0 when not live
+    currentLiveActionBuzz,    // 0-100, computed from full WP history; retains last value after game ends
   };
 
   // ── Audit snapshot — captures everything that affects the excitement
