@@ -1,7 +1,9 @@
 // ── Excitement Score (0-100) ──────────────────────────────────────────────────
-// Closeness:        0-60 pts  (dominant factor; maxed automatically when isOT)
+// Closeness:        0-65 pts  (dominant factor; maxed automatically when isOT)
+//                             Linear: 65 at margin ≤ 1, 0 at sport's blowout
+//                             threshold, proportional in between.
 // Comeback:          +10 pts
-// OT:                +10 pts
+// OT:                 +5 pts
 // Momentum bonus:    +20 pts  (late goals, lead changes, time spent close)
 // Upset bonus:       +10 pts  (underdog won outright)
 // Stats activity:   +15 pts  (computed from game stats snapshot)
@@ -20,8 +22,8 @@ export function calcExcitement(
   upsetBonus = 0,
   statsBonus = 0,
 ) {
-  const cls = closenessScore(margin, sport.margins, isOT, sport.closenessPoints);
-  const otBonus       = isOT       ? 10 : 0;
+  const cls = closenessScore(margin, sport.margins, isOT, sport.canDraw);
+  const otBonus       = isOT       ? 5 : 0;
   const comebackBonus = isComeback ? 10 : 0;
   const raw =
     cls +
@@ -55,8 +57,8 @@ export function calcExcitementBreakdown(
   upsetBonus = 0,
   statsBonus = 0,
 ) {
-  const cls = closenessScore(margin, sport.margins, isOT, sport.closenessPoints);
-  const otBonus       = isOT       ? 10 : 0;
+  const cls = closenessScore(margin, sport.margins, isOT, sport.canDraw);
+  const otBonus       = isOT       ? 5 : 0;
   const comebackBonus = isComeback ? 10 : 0;
   const raw =
     cls +
@@ -81,28 +83,18 @@ export function calcExcitementBreakdown(
   };
 }
 
-// Closeness — proportionally rescaled to fit a 0-60 ceiling, preserving
-// the relative gap between tiers.
+// Closeness — linear scale from 65 down to 0 at the sport's blowout threshold.
+// Sports that can draw (soccer) anchor at margin=0, dividing by blowout.
+// Sports that can't draw anchor at margin=1 (the tightest possible win),
+// dividing by blowout−1 so a 1-point/1-goal win always scores 65.
 // OT/extra-innings games are always max closeness — by definition the teams
 // were tied when regulation ended, regardless of the final margin.
-// Sports can supply a closenessPoints table to shift the tier values without
-// touching the margin thresholds. Soccer uses this to spread its distribution:
-// draws still earn 60, but 1-goal wins earn 40 rather than 60, since low
-// margins are the norm in soccer rather than exceptional outcomes.
-function closenessScore(margin, m, isOT = false, pts = null) {
-  const drawPts    = pts?.draw    ?? 60;
-  const greatPts   = pts?.great   ?? 60;
-  const goodPts    = pts?.good    ?? 45;
-  const okPts      = pts?.ok      ?? 29;
-  const blowoutPts = pts?.blowout ?? 10;
-
-  if (isOT)                return drawPts;
-  if (margin === 0)        return drawPts;
-  if (margin <= m.great)   return greatPts;
-  if (margin <= m.good)    return goodPts;
-  if (margin <= m.ok)      return okPts;
-  if (margin <= m.blowout) return blowoutPts;
-  return 0;
+function closenessScore(margin, m, isOT = false, canDraw = false) {
+  if (isOT || margin === 0) return 65;
+  if (margin >= m.blowout) return 0;
+  return canDraw
+    ? Math.ceil(65 * (m.blowout - margin) / m.blowout)
+    : Math.ceil(65 * (m.blowout - margin) / (m.blowout - 1));
 }
 
 // Comeback: did the margin shrink significantly from halftime to final?

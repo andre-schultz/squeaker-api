@@ -405,14 +405,19 @@ function estimateProgress(sportKey, detail, comps) {
       if (detail.includes('2nd') && isIntermission) return 0.5;
     }
 
-    if (['nba', 'cbb'].includes(sportKey)) {
+    if (['nba', 'wnba', 'cbb', 'wcbb'].includes(sportKey)) {
       const qtr  = detail.includes('1st') ? 1 : detail.includes('2nd') ? 2
                  : detail.includes('3rd') ? 3 : detail.includes('4th') ? 4 : null;
       const mins = parseMinutes(detail);
-      if (sportKey === 'nba' && qtr && mins !== null && !isIntermission) {
-        return Math.min(1.0, ((qtr - 1) * 12 + (12 - mins)) / 48);
+      if (sportKey === 'nba') {
+        if (qtr && mins !== null && !isIntermission) return Math.min(1.0, ((qtr - 1) * 12 + (12 - mins)) / 48);
+        if (qtr && isIntermission) return Math.min(1.0, (qtr * 12) / 48);
       }
-      if (sportKey === 'nba' && qtr && isIntermission) return Math.min(1.0, (qtr * 12) / 48);
+      if (sportKey === 'wnba' || sportKey === 'wcbb') {
+        // 4 quarters × 10 min = 40 min total
+        if (qtr && mins !== null && !isIntermission) return Math.min(1.0, ((qtr - 1) * 10 + (10 - mins)) / 40);
+        if (qtr && isIntermission) return Math.min(1.0, (qtr * 10) / 40);
+      }
       if (sportKey === 'cbb') {
         if (detail.includes('1st half')) return isIntermission ? 0.5 : mins != null ? (20 - mins) / 40 : 0.25;
         if (detail.includes('2nd half')) return isIntermission ? 1.0 : mins != null ? (40 - mins) / 40 : 0.75;
@@ -440,7 +445,7 @@ function estimateProgress(sportKey, detail, comps) {
       if (detail.includes('3rd') || (!per && isIntermission)) return 1.0;
     }
 
-    if (['mls', 'epl', 'ucl'].includes(sportKey)) {
+    if (['mls', 'epl', 'ucl', 'nwsl'].includes(sportKey)) {
       const minMatch = detail.match(/(\d+)'/);
       if (minMatch) return Math.min(1.0, parseInt(minMatch[1]) / 90);
       if (isIntermission) return 0.5;
@@ -451,7 +456,11 @@ function estimateProgress(sportKey, detail, comps) {
 
 function parseMinutes(detail) {
   const m = detail.match(/(\d+):(\d+)/);
-  return m ? parseInt(m[1]) + parseInt(m[2]) / 60 : null;
+  if (m) return parseInt(m[1]) + parseInt(m[2]) / 60;
+  // ESPN uses decimal seconds for sub-minute clock (e.g. "20.2 - 4th")
+  const s = detail.match(/^(\d+\.\d+)\s*-/);
+  if (s) return parseFloat(s[1]) / 60;
+  return null;
 }
 
 function parseInning(detail) {
