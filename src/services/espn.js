@@ -142,7 +142,7 @@ async function parseEvent(ev, sportKey, cfg) {
                detail.includes('overtime') ||
                detail.includes('extra time') ||
                detail.includes('penalties') ||
-               (sportKey === 'mlb' && /\/1[0-9]/.test(detail));
+               (sportKey === 'mlb' && (/\/\d{2,}/.test(detail) || parseInning(detail) >= 10));
 
   // Game progress (0.0–1.0) — used to weight live excitement scores
   const progress = estimateProgress(sportKey, detail, comps);
@@ -464,9 +464,6 @@ function parseMinutes(detail) {
 }
 
 function parseInning(detail) {
-  const words = ['1st','2nd','3rd','4th','5th','6th','7th','8th','9th','10th','11th','12th'];
-  for (let i = 0; i < words.length; i++) {
-    if (detail.includes(words[i])) return i + 1;
-  }
-  return null;
+  const m = detail.match(/\b(\d+)(?:st|nd|rd|th)\b/);
+  return m ? parseInt(m[1]) : null;
 }
