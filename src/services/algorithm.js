@@ -1,7 +1,7 @@
 // ── Excitement Score (0-100) ──────────────────────────────────────────────────
 // Closeness:        0-65 pts  (dominant factor; maxed automatically when isOT)
-//                             Linear: 65 at margin ≤ 1, 0 at sport's blowout
-//                             threshold, proportional in between.
+//                             Soccer: max 60, flat for margin 0–1, linear below.
+//                             Other sports: max 65 at margin=1, linear below.
 // Comeback:          +10 pts
 // OT:                 +5 pts
 // Momentum bonus:    +20 pts  (late goals, lead changes, time spent close)
@@ -22,7 +22,7 @@ export function calcExcitement(
   upsetBonus = 0,
   statsBonus = 0,
 ) {
-  const cls = closenessScore(margin, sport.margins, isOT, sport.canDraw);
+  const cls = closenessScore(margin, sport, isOT);
   const otBonus       = isOT       ? 5 : 0;
   const comebackBonus = isComeback ? 10 : 0;
   const raw =
@@ -57,7 +57,7 @@ export function calcExcitementBreakdown(
   upsetBonus = 0,
   statsBonus = 0,
 ) {
-  const cls = closenessScore(margin, sport.margins, isOT, sport.canDraw);
+  const cls = closenessScore(margin, sport, isOT);
   const otBonus       = isOT       ? 5 : 0;
   const comebackBonus = isComeback ? 10 : 0;
   const raw =
@@ -83,18 +83,17 @@ export function calcExcitementBreakdown(
   };
 }
 
-// Closeness — linear scale from 65 down to 0 at the sport's blowout threshold.
-// Sports that can draw (soccer) anchor at margin=0, dividing by blowout.
-// Sports that can't draw anchor at margin=1 (the tightest possible win),
-// dividing by blowout−1 so a 1-point/1-goal win always scores 65.
-// OT/extra-innings games are always max closeness — by definition the teams
-// were tied when regulation ended, regardless of the final margin.
-function closenessScore(margin, m, isOT = false, canDraw = false) {
-  if (isOT || margin === 0) return 65;
-  if (margin >= m.blowout) return 0;
-  return canDraw
-    ? Math.ceil(65 * (m.blowout - margin) / m.blowout)
-    : Math.ceil(65 * (m.blowout - margin) / (m.blowout - 1));
+// Closeness — linear scale from max down to 0 at the sport's blowout threshold.
+// Soccer (canDraw): max is 60; a draw and a 1-goal win both earn the max.
+//   Scale anchors at margin=1 (÷ blowout−1) so steps are equal from there down.
+// Non-soccer: max is 65, also anchored at margin=1.
+// OT/extra-innings games are always max closeness — teams were tied at end of regulation.
+function closenessScore(margin, sport, isOT = false) {
+  const maxClose = sport.canDraw ? 60 : 65;
+  const blowout  = sport.margins.blowout;
+  if (isOT || margin === 0) return maxClose;
+  if (margin >= blowout) return 0;
+  return Math.ceil(maxClose * (blowout - margin) / (blowout - 1));
 }
 
 // Comeback: did the margin shrink significantly from halftime to final?

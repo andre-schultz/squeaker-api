@@ -161,7 +161,7 @@ function getLeader(home, away) {
 function closenessThreshold(sport) {
   const thresholds = {
     nba: 5, nfl: 7, mlb: 1, nhl: 1,
-    mls: 1, epl: 1, ucl: 1, cfb: 7, cbb: 5,
+    mls: 1, epl: 1, ucl: 1, nwsl: 1, cfb: 7, cbb: 5,
   };
   return thresholds[sport?.sport || sport] ?? 2;
 }
