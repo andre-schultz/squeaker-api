@@ -3,12 +3,14 @@ import { setCache, getCache } from './cache.js';
 const BONUS_TTL = 7 * 24 * 60 * 60; // 7 days
 const MAX_BONUS = 15;
 
-// Range-normalize: maps [floor, ceiling] → [0, 1], clamped.
+// Range-normalize: maps [floor, ceiling] → [0, 1.35], clamped.
 // floor   = realistic minimum for a below-average game
 // ceiling = ~p90 of real games (top ~10% hit or exceed it, scoring near 15)
+// Values above the ceiling can score up to 1.35, boosting the max stats
+// bonus from 15 to ~20. Values at or below the ceiling are unaffected.
 // Values for stats that naturally start at 0 use floor=0.
 function nr(value, floor, ceiling) {
-  return Math.max(0, Math.min(1, ((value || 0) - floor) / (ceiling - floor)));
+  return Math.max(0, Math.min(1.35, ((value || 0) - floor) / (ceiling - floor)));
 }
 
 function sum(a, b) {
