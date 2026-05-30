@@ -136,16 +136,24 @@ async function parseEvent(ev, sportKey, cfg) {
 
   const detail    = (status?.shortDetail || '').toLowerCase();
   const rawDetail = status?.shortDetail || '';
+  // For soccer, ESPN increments period when ET/penalties start (period 3 = ET first half,
+  // 4 = ET second half, 5 = penalty shootout). Use it as a fallback isOT signal when
+  // shortDetail is just a minute marker like "91'" with no OT keyword.
+  const period    = co.status?.period;
 
   const isOT = /\bot\b/.test(detail) ||
                /\b\d+ot\b/.test(detail) ||
                detail.includes('overtime') ||
                detail.includes('extra time') ||
                detail.includes('penalties') ||
+               detail.includes('pens') ||       // "FT-Pens" abbreviated penalty shootout
+               detail.includes('ft-et') ||      // "FT-ET" full time after extra time
+               detail.includes('aet') ||        // "AET" after extra time
+               (['mls', 'epl', 'ucl', 'nwsl'].includes(sportKey) && period >= 3) ||
                (sportKey === 'mlb' && (/\/\d{2,}/.test(detail) || parseInning(detail) >= 10));
 
   // Game progress (0.0–1.0) — used to weight live excitement scores
-  const progress = estimateProgress(sportKey, detail, comps);
+  const progress = estimateProgress(sportKey, detail, comps, period);
 
   // Extract halftime scores for comeback detection
   const homeLines = home.linescores || [];
@@ -271,6 +279,19 @@ async function parseEvent(ev, sportKey, cfg) {
       margin, isOT, isComeback, cfg, momentumBonus,
       live ? progress : 1.0, upsetBonus, statsBonus,
     );
+    // Raw ESPN status fields — verbatim inputs to estimateProgress(), plus the
+    // derived progress/isOT it produced, so we can replay and tune it offline.
+    const statusSnapshot = {
+      name:         status?.name,            // e.g. "STATUS_HALFTIME", "STATUS_FINAL_PEN"
+      state:        status?.state,           // "pre" | "in" | "post"
+      description:  status?.description,      // e.g. "Final Score - After Penalties"
+      detail:       status?.detail,          // e.g. "FT-Pens"
+      period:       co.status?.period,       // ESPN period (soccer 3+ = ET/penalties)
+      displayClock: co.status?.displayClock, // e.g. "9:11", "120'+2'"
+      clock:        co.status?.clock,        // numeric seconds remaining
+      derivedProgress: progress,             // what estimateProgress() returned
+      derivedIsOT:     isOT,                  // what isOT detection returned
+    };
     await recordAudit(game, {
       momentum:   { bonus: momentumBonus, signals },
       upset:      { bonus: upsetBonus, winnerPreGameWP },
@@ -282,7 +303,7 @@ async function parseEvent(ev, sportKey, cfg) {
         ? { score: statsBonusRecord.score, breakdown: statsBonusRecord.breakdown }
         : null,
       excitement: breakdown,
-    });
+    }, statusSnapshot);
   }
 
   // ── Freeze in-process ────────────────────────────────────────────────
@@ -377,15 +398,20 @@ function getAllDateStrings() {
 }
 
 // Estimates game progress 0.0–1.0 from status detail string
-function estimateProgress(sportKey, detail, comps) {
+function estimateProgress(sportKey, detail, comps, period) {
   try {
     if (!detail || detail.includes('final') || detail.includes('ft')) return 1.0;
+
+    // Soccer: period >= 3 means ET or penalties regardless of what shortDetail says
+    // (live ET shows minute strings like "91'" that don't mention overtime)
+    if (['mls', 'epl', 'ucl', 'nwsl'].includes(sportKey) && period >= 3) return 1.0;
 
     // Any overtime / extra time / penalties = full game played
     if (/\bot\b/.test(detail) || /\b\d+ot\b/.test(detail) ||
         detail.includes('overtime') ||
         detail.includes('extra time') || detail.includes('penalties') ||
-        detail.includes('shootout')) return 1.0;
+        detail.includes('pens') || detail.includes('ft-et') ||
+        detail.includes('aet') || detail.includes('shootout')) return 1.0;
 
     // Intermission / end of period — treat as end of that period
     const isIntermission = detail.includes('intermission') ||

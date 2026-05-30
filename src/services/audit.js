@@ -22,7 +22,7 @@ const doneAudited = new Set();
 // Append a snapshot for this game. No-op when AUDIT_ENABLED is false.
 // Skips the write if the new snapshot is identical to the previous one
 // (common for finished games whose state doesn't change between cycles).
-export async function recordAudit(game, signals) {
+export async function recordAudit(game, signals, status) {
   if (!AUDIT_ENABLED) return;
   if (game.done && doneAudited.has(game.id)) return;
 
@@ -44,6 +44,9 @@ export async function recordAudit(game, signals) {
       live:      game.live,
       done:      game.done,
     },
+    // Raw ESPN status fields — the exact inputs estimateProgress() sees, captured
+    // verbatim so we can replay and fine-tune progress estimation offline.
+    status,
     signals,
   };
 
