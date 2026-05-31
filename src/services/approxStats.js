@@ -1,6 +1,6 @@
 import { setCache, getCache } from './cache.js';
-
-const APPROX_TTL = 7 * 24 * 60 * 60; // 7 days
+import { CACHE_TTL } from '../config.js';
+import { sum, THREE_KEY } from './util.js';
 
 // Pick uniformly from the unique set of values reachable by adding offsets in
 // [-noise, +noise] to value, clamped to >= 0.  Deduplication prevents low values
@@ -12,10 +12,6 @@ function fuzz(value, noise) {
   for (let i = -noise; i <= noise; i++) candidates.add(Math.max(0, v + i));
   const pool = [...candidates];
   return pool[Math.floor(Math.random() * pool.length)];
-}
-
-function sum(a, b) {
-  return (a || 0) + (b || 0);
 }
 
 function soccer(game, s) {
@@ -67,7 +63,6 @@ function mlb(game, s) {
 
 function nba(game, s) {
   const { home, away } = s;
-  const THREE_KEY = 'threePointFieldGoalsMade-threePointFieldGoalsAttempted';
   return {
     points:        fuzz(sum(game.home?.score, game.away?.score), 15),
     threePointers: fuzz(sum(home[THREE_KEY], away[THREE_KEY]), 3),
@@ -88,7 +83,7 @@ function nfl(game, s) {
 }
 
 const BY_SPORT = {
-  epl: soccer, mls: soccer, ucl: soccer, nwsl: soccer,
+  epl: soccer, mls: soccer, ucl: soccer, nwsl: soccer, intl: soccer,
   nhl,
   mlb,
   nba, cbb: nba, wnba: nba, wcbb: nba,
@@ -106,7 +101,7 @@ export async function recordApproxStats(game, statsSnapshot) {
 
   const approx = compute(game, statsSnapshot);
   const record = { t: Date.now(), sport: game.sport, approx };
-  await setCache(`approx-stats:${game.id}`, record, APPROX_TTL);
+  await setCache(`approx-stats:${game.id}`, record, CACHE_TTL.approxStats);
   return record;
 }
 

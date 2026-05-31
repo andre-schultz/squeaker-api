@@ -150,10 +150,6 @@ export async function recordOddsSnapshot(game, sgoEvents) {
   return timeline;
 }
 
-export async function getOddsTimeline(gameId) {
-  return (await getCache(`odds-timeline:${gameId}`)) || [];
-}
-
 // 0–100 betting score.
 //
 // drift    — |currentHomeWP − openingHomeWP|; how much has the line moved
@@ -292,7 +288,7 @@ function mlToRawProb(ml) {
 
 // Convert a home+away ML pair to vig-normalised [0,1] probabilities so
 // homeWP + awayWP = 1.0 regardless of the book's margin.
-function mlPairToWP(homeML, awayML) {
+export function mlPairToWP(homeML, awayML) {
   const rawHome = mlToRawProb(homeML);
   const rawAway = mlToRawProb(awayML);
   if (rawHome == null || rawAway == null) return null;

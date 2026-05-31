@@ -46,11 +46,3 @@ export async function setCache(key, value, ttlSeconds) {
   }
 }
 
-export async function deleteCache(key) {
-  try {
-    _track('DEL', key);
-    await redis.del(key);
-  } catch (e) {
-    console.error('Cache DEL error:', e.message);
-  }
-}

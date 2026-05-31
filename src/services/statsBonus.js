@@ -1,6 +1,7 @@
 import { setCache, getCache } from './cache.js';
+import { CACHE_TTL } from '../config.js';
+import { sum, THREE_KEY } from './util.js';
 
-const BONUS_TTL = 7 * 24 * 60 * 60; // 7 days
 const MAX_BONUS = 15;
 
 // Range-normalize: maps [floor, ceiling] → [0, 1.35], clamped.
@@ -11,10 +12,6 @@ const MAX_BONUS = 15;
 // Values for stats that naturally start at 0 use floor=0.
 function nr(value, floor, ceiling) {
   return Math.max(0, Math.min(1.35, ((value || 0) - floor) / (ceiling - floor)));
-}
-
-function sum(a, b) {
-  return (a || 0) + (b || 0);
 }
 
 // Each sport function returns a score 1–15 and a breakdown of normalised components.
@@ -61,7 +58,6 @@ function mlb(s, totalScore) {
 
 function nba(s, totalScore) {
   const { home, away } = s;
-  const THREE_KEY = 'threePointFieldGoalsMade-threePointFieldGoalsAttempted';
   const stats = {
     points:        nr(totalScore, 211, 250),
     threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 20, 31),
@@ -73,7 +69,6 @@ function nba(s, totalScore) {
 
 function wnba(s, totalScore) {
   const { home, away } = s;
-  const THREE_KEY = 'threePointFieldGoalsMade-threePointFieldGoalsAttempted';
   const stats = {
     points:        nr(totalScore, 140, 180),
     threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 10, 21),
@@ -85,7 +80,6 @@ function wnba(s, totalScore) {
 
 function cbb(s, totalScore) {
   const { home, away } = s;
-  const THREE_KEY = 'threePointFieldGoalsMade-threePointFieldGoalsAttempted';
   const stats = {
     points:        nr(totalScore, 131, 169),
     threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 12, 20),
@@ -97,7 +91,6 @@ function cbb(s, totalScore) {
 
 function wcbb(s, totalScore) {
   const { home, away } = s;
-  const THREE_KEY = 'threePointFieldGoalsMade-threePointFieldGoalsAttempted';
   const stats = {
     points:        nr(totalScore, 116, 154),
     threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 8, 17),
@@ -139,7 +132,7 @@ function weighted(stats, weights) {
 }
 
 const BY_SPORT = {
-  epl: soccer, mls: soccer, ucl: soccer, nwsl: soccer,
+  epl: soccer, mls: soccer, ucl: soccer, nwsl: soccer, intl: soccer,
   nhl,
   mlb,
   nba,
@@ -166,7 +159,7 @@ export async function recordStatsBonus(game, statsSnapshot) {
     breakdown: result.breakdown,
   };
 
-  await setCache(`stats-bonus:${game.id}`, record, BONUS_TTL);
+  await setCache(`stats-bonus:${game.id}`, record, CACHE_TTL.statsBonus);
   return record;
 }
 

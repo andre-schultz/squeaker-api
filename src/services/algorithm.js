@@ -23,31 +23,19 @@ export function calcExcitement(
   upsetBonus = 0,
   statsBonus = 0,
 ) {
-  const cls = closenessScore(margin, sport, isOT);
-  const otBonus       = isOT       ? 5 : 0;
-  const comebackBonus = isComeback ? 10 : 0;
-  const raw =
-    cls +
-    otBonus +
-    comebackBonus +
-    momentumBonus +
-    upsetBonus +
-    statsBonus;
-
-  // For live games, scale score by how far through the game we are.
-  // A 0-0 tie in the 1st inning scores much lower than 0-0 in the 9th.
-  // We blend: early game gets 30% raw + 70% progress-weighted.
-  // By the final 20% of the game, the full raw score applies.
-  const progressMultiplier = progress < 0.8
-    ? 0.3 + (progress / 0.8) * 0.7   // ramps from 0.3→1.0 over first 80%
-    : 1.0;                             // last 20% = full score
-
-  return Math.min(100, Math.round(raw * progressMultiplier));
+  return calcExcitementBreakdown(
+    margin, isOT, isComeback, sport,
+    momentumBonus, progress, upsetBonus, statsBonus,
+  ).final;
 }
 
-// Returns the per-bonus breakdown used for the audit log. Same logic as
-// calcExcitement but exposes intermediate values rather than the rounded
-// total. Use this when recording audit snapshots.
+// Returns the per-bonus breakdown used for the audit log. The `final` field is
+// the same value calcExcitement returns; the rest expose the intermediate
+// values for the audit snapshot.
+//
+// For live games the raw score is scaled by how far through the game we are:
+// a 0-0 tie in the 1st inning scores much lower than 0-0 in the 9th. Early
+// game blends 30% raw + 70% progress-weighted; the final 20% applies full raw.
 export function calcExcitementBreakdown(
   margin,
   isOT,
@@ -103,45 +91,6 @@ export function detectComeback(halfHome, halfAway, finalMargin, sport) {
   if (halfHome == null || halfAway == null) return false;
   const halfMargin = Math.abs(halfHome - halfAway);
   return (halfMargin - finalMargin) >= sport.margins.good;
-}
-
-// ── Buzz Score (0-100) ───────────────────────────────────────────────────────
-// Live game:     velocity 60% + comments 25% + upvotes 15%
-// Finished game: comments 60% + upvotes 40%
-// Normalized against sport baseline so MLS isn't unfairly vs NBA
-
-export function calcBuzz({ comments, upvotes, velocity, isLive }, sport) {
-  const base = sport.base;
-
-  const commentScore  = normalize(comments,  base.comments);
-  const upvoteScore   = normalize(upvotes,   base.upvotes);
-  const velocityScore = normalize(velocity,  base.velocity);
-
-  if (isLive) {
-    return Math.round(
-      velocityScore * 0.60 +
-      commentScore  * 0.25 +
-      upvoteScore   * 0.15
-    );
-  } else {
-    return Math.round(
-      commentScore * 0.60 +
-      upvoteScore  * 0.40
-    );
-  }
-}
-
-function normalize(value, baseline) {
-  return Math.min(100, Math.round((value / baseline) * 100));
-}
-
-// ── Labels ───────────────────────────────────────────────────────────────────
-export function excitementLabel(score) {
-  if (score >= 80) return 'Must Watch';
-  if (score >= 60) return 'Exciting';
-  if (score >= 40) return 'Worth It';
-  if (score >= 20) return 'So-So';
-  return 'Skip It';
 }
 
 export function excitementDesc(margin, isOT, isComeback, sport) {

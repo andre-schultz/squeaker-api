@@ -70,10 +70,6 @@ export async function recordAudit(game, signals, status) {
   }
 }
 
-export async function getAudit(gameId) {
-  return (await getCache(`audit:${gameId}`)) || [];
-}
-
 function deepEqualIgnoringTime(a, b) {
   // Stringify with timestamps zeroed; cheap and good enough for dedup.
   return JSON.stringify({ ...a, t: 0 }) === JSON.stringify({ ...b, t: 0 });

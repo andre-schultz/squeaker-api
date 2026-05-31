@@ -37,7 +37,7 @@ const ODDS_REFRESH_MS = 10 * 60 * 1000;    // 10 min — matches SGO update freq
 const STATS_REFRESH_MS = 3 * 60 * 1000;    // 3 min — same cadence as game cycle
 const OFF_REFRESH_MS = 10 * 60 * 1000;     // 10 min, off hours
 const TICK_MS = 60 * 1000;                  // wake up once a minute
-const HISTORY_TTL = 7 * 24 * 60 * 60;
+const HISTORY_TTL = CACHE_TTL.history;
 
 // ── Off-hours throttle ────────────────────────────────────────────────────────
 
@@ -104,7 +104,11 @@ async function runGameCycle() {
     // so neither Map accumulates stale entries across long-running processes.
     const cutoff = Date.now() - HOURS_WINDOW * 60 * 60 * 1000;
     for (const [id, g] of _doneGames) {
-      if (new Date(g.date).getTime() < cutoff) {
+      // Fall back to doneAt when game.date is missing/malformed so a bad date
+      // can't pin a stale entry in the map forever (NaN < cutoff is false).
+      const dateTs = new Date(g.date).getTime();
+      const ts = Number.isNaN(dateTs) ? new Date(g.doneAt ?? 0).getTime() : dateTs;
+      if (!Number.isFinite(ts) || ts < cutoff) {
         _doneGames.delete(id);
         pruneFrozenGame(id);
       }
@@ -179,11 +183,20 @@ async function saveHistory(game, { stats } = {}) {
 // ── Stats cycle (fetch ESPN summary stats for all tracked sports) ─────────────
 //
 // Polls the ESPN /summary endpoint for every game that is live or recently
-// finished (within 36 hours). Stores:
+// finished (done within the last hour — see isActiveCandidate). Stores:
 //   stats:{gameId}          — latest snapshot (team stats + sport-specific details)
 //   stats-timeline:{gameId} — append-only, one entry per scoring change
 
 let statsRunning = false;
+
+// Run an async fn over items with bounded concurrency so a big slate doesn't
+// fire dozens of ESPN /summary calls at once. Preserves the per-item awaits'
+// independence (each game writes its own Redis keys).
+async function forEachLimited(items, limit, fn) {
+  for (let i = 0; i < items.length; i += limit) {
+    await Promise.all(items.slice(i, i + limit).map(fn));
+  }
+}
 
 async function runStatsCycle() {
   if (statsRunning) return;
@@ -197,19 +210,18 @@ async function runStatsCycle() {
     if (candidates.length === 0) return;
 
     let fetched = 0;
-    for (const game of candidates) {
+    await forEachLimited(candidates, 4, async (game) => {
       const cfg = SPORTS[game.sport];
-      if (!cfg) continue;
+      if (!cfg) return;
       const snapshot = await recordStatsSnapshot(game, cfg.espnSport, cfg.espnLeague);
-      if (snapshot) {
-        fetched++;
-        await recordStatsBonus(game, snapshot);
-        if (game.done) {
-          await saveHistory(game, { stats: snapshot });
-          await recordApproxStats(game, snapshot);
-        }
+      if (!snapshot) return;
+      fetched++;
+      await recordStatsBonus(game, snapshot);
+      if (game.done) {
+        await saveHistory(game, { stats: snapshot });
+        await recordApproxStats(game, snapshot);
       }
-    }
+    });
 
     console.log(`[stats] cycle: ${candidates.length} games, ${fetched} fetched (${Date.now() - t0}ms)`);
     console.log(`[redis] stats-cycle — ${fmtCounters(drainCacheCounters())}`);

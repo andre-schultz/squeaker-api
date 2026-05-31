@@ -1,9 +1,9 @@
 // Uses native global fetch (Node 18+). node-fetch v3 was previously implicated
 // in a slow memory leak via undici pool retention; native fetch hits the
 // same undici layer but without the wrapper.
-import { SPORTS, HOURS_WINDOW, CACHE_TTL, AUDIT_ENABLED } from '../config.js';
+import { SPORTS, HOURS_WINDOW, AUDIT_ENABLED, isSoccer } from '../config.js';
 import { calcExcitement, calcExcitementBreakdown, detectComeback, excitementDesc } from './algorithm.js';
-import { recordSnapshot, getTimeline, analyzeMomentum } from './timeline.js';
+import { recordSnapshot, analyzeMomentum } from './timeline.js';
 import {
   fetchAndStoreWPTimeline,
   analyzeUpset,
@@ -12,7 +12,7 @@ import {
 import { getOrFetchOdds } from './odds.js';
 import { recordAudit } from './audit.js';
 import { getStatsBonus } from './statsBonus.js';
-import { getCache, setCache } from './cache.js';
+import { mlPairToWP } from './sgo.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 
@@ -74,30 +74,38 @@ export async function fetchAllGames() {
 }
 
 async function fetchSport(key, cfg, dates) {
+  // The 2-3 dates are independent scoreboard fetches — run them in parallel.
+  const perDate = await Promise.all(dates.map(date => fetchSportDate(key, cfg, date)));
+  return {
+    games:    perDate.flatMap(r => r.games),
+    upcoming: perDate.flatMap(r => r.upcoming),
+  };
+}
+
+// Fetch and parse a single date's scoreboard for one sport.
+async function fetchSportDate(key, cfg, date) {
   const games    = [];
   const upcoming = [];
-  for (const date of dates) {
-    try {
-      const url = `${BASE}/${cfg.espnSport}/${cfg.espnLeague}/scoreboard${date ? `?dates=${date}` : ''}`;
-      const res = await fetch(url, { headers: { 'User-Agent': 'Squeaker/1.0' } });
-      if (!res.ok) {
-        // Drain body so the underlying socket is released.
-        try { await res.text(); } catch {}
-        continue;
-      }
-      let data = await res.json();
-      const events = data.events || [];
-      for (const ev of events) {
-        const game = await parseEvent(ev, key, cfg);
-        if (game) { games.push(game); continue; }
-        const upcomingGame = parseUpcomingEvent(ev, key, cfg);
-        if (upcomingGame) upcoming.push(upcomingGame);
-      }
-      // Release the parsed payload before iterating to the next date.
-      data = null;
-    } catch (e) {
-      console.error(`ESPN fetch error [${key}]:`, e.message);
+  try {
+    const url = `${BASE}/${cfg.espnSport}/${cfg.espnLeague}/scoreboard${date ? `?dates=${date}` : ''}`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'Squeaker/1.0' } });
+    if (!res.ok) {
+      // Drain body so the underlying socket is released.
+      try { await res.text(); } catch {}
+      return { games, upcoming };
     }
+    let data = await res.json();
+    const events = data.events || [];
+    for (const ev of events) {
+      const game = await parseEvent(ev, key, cfg);
+      if (game) { games.push(game); continue; }
+      const upcomingGame = parseUpcomingEvent(ev, key, cfg);
+      if (upcomingGame) upcoming.push(upcomingGame);
+    }
+    // Release the parsed payload before returning.
+    data = null;
+  } catch (e) {
+    console.error(`ESPN fetch error [${key}]:`, e.message);
   }
   return { games, upcoming };
 }
@@ -141,15 +149,8 @@ async function parseEvent(ev, sportKey, cfg) {
   // shortDetail is just a minute marker like "91'" with no OT keyword.
   const period    = co.status?.period;
 
-  const isOT = /\bot\b/.test(detail) ||
-               /\b\d+ot\b/.test(detail) ||
-               detail.includes('overtime') ||
-               detail.includes('extra time') ||
-               detail.includes('penalties') ||
-               detail.includes('pens') ||       // "FT-Pens" abbreviated penalty shootout
-               detail.includes('ft-et') ||      // "FT-ET" full time after extra time
-               detail.includes('aet') ||        // "AET" after extra time
-               (['mls', 'epl', 'ucl', 'nwsl'].includes(sportKey) && period >= 3) ||
+  const isOT = hasOTKeyword(detail) ||
+               (isSoccer(sportKey) && period >= 3) ||
                (sportKey === 'mlb' && (/\/\d{2,}/.test(detail) || parseInning(detail) >= 10));
 
   // Game progress (0.0–1.0) — used to weight live excitement scores
@@ -176,39 +177,41 @@ async function parseEvent(ev, sportKey, cfg) {
     live, done,
   };
 
-  // Record score snapshot for momentum tracking
-  const timeline = await recordSnapshot(partialGame);
+  // These four are independent cache/network operations — run them together
+  // rather than serializing a round-trip per signal:
+  //  • recordSnapshot          → score timeline (momentum)
+  //  • fetchAndStoreWPTimeline → ESPN play-by-play WP history (no-op for soccer
+  //                              / pre-game); drives upset + action signals
+  //  • getOrFetchOdds          → frozen pre-game line (display + upset fallback)
+  //  • getStatsBonus           → stats-activity bonus written by the stats cycle
+  const [timeline, wpTimeline, odds, statsBonusRecord] = await Promise.all([
+    recordSnapshot(partialGame),
+    fetchAndStoreWPTimeline(partialGame, cfg.espnSport, cfg.espnLeague),
+    getOrFetchOdds(ev.id, cfg.espnSport, cfg.espnLeague),
+    getStatsBonus(ev.id),
+  ]);
 
   // Analyze momentum from full scoring timeline
   const { momentumBonus, signals } = analyzeMomentum(timeline, { sport: sportKey });
 
   // ── Win-probability signal ──────────────────────────────────────────
-  // Fetch ESPN's full play-by-play WP history and store it (no-op for
-  // soccer / pre-game). All downstream analysis runs on this richer dataset.
-  const wpTimeline = await fetchAndStoreWPTimeline(partialGame, cfg.espnSport, cfg.espnLeague);
   let { upsetBonus, winnerPreGameWP } = analyzeUpset(wpTimeline, {
     ...partialGame,
     home: { ...partialGame.home, score: homeScore },
     away: { ...partialGame.away, score: awayScore },
   });
 
-  // ── Frozen odds (one-shot fetch on first sighting, cached for display) ─
-  // ESPN's /odds endpoint returns the closing line and doesn't update during
-  // live play, so polling is wasted. We grab once and embed on the game.
-  const odds = await getOrFetchOdds(ev.id, cfg.espnSport, cfg.espnLeague);
-
   // When the WP timeline was never recorded, fall back to the pre-game money
-  // line to detect upsets. Use vig-normalised implied probability so the two
-  // sides always sum to 1.0.
+  // line to detect upsets. mlPairToWP vig-normalises so the sides sum to 1.0.
   if (winnerPreGameWP === null && done && odds?.homeML != null && odds?.awayML != null) {
-    const rawHome = odds.homeML > 0 ? 100 / (odds.homeML + 100) : (-odds.homeML) / (-odds.homeML + 100);
-    const rawAway = odds.awayML > 0 ? 100 / (odds.awayML + 100) : (-odds.awayML) / (-odds.awayML + 100);
-    const total = rawHome + rawAway;
-    const winnerHome = homeScore > awayScore;
-    const winnerWP = (winnerHome ? rawHome : rawAway) / total;
-    winnerPreGameWP = winnerWP;
-    if (winnerWP < 0.5) {
-      upsetBonus = Math.min(10, Math.max(0, Math.round((0.5 - winnerWP) * 20)));
+    const wp = mlPairToWP(odds.homeML, odds.awayML);
+    if (wp) {
+      const winnerHome = homeScore > awayScore;
+      const winnerWP   = winnerHome ? wp.homeWP : wp.awayWP;
+      winnerPreGameWP  = winnerWP;
+      if (winnerWP < 0.5) {
+        upsetBonus = Math.min(10, Math.max(0, Math.round((0.5 - winnerWP) * 20)));
+      }
     }
   }
 
@@ -219,8 +222,6 @@ async function parseEvent(ev, sportKey, cfg) {
   const actionRaw = (live || done) ? computeActionScore(wpTimeline, sportKey) : null;
   const currentLiveActionBuzz = actionRaw?.score ?? 0;
 
-  // Fetch latest stats-activity bonus (written by the stats cycle, 0 if not yet available)
-  const statsBonusRecord = await getStatsBonus(ev.id);
   const statsBonus = statsBonusRecord?.score ?? 0;
 
   // For live games, scale by progress so early-game close scores don't rank too high
@@ -235,15 +236,7 @@ async function parseEvent(ev, sportKey, cfg) {
     statsBonus,
   );
 
-  const mkTeam = (T, score, winner) => ({
-    name:     T.team.shortDisplayName || T.team.displayName,
-    fullName: T.team.displayName,
-    abbr:     T.team.abbreviation,
-    logo:     T.team.logo,
-    color:    T.team.color ? `#${T.team.color}` : '#374151',
-    score,
-    winner:   !!winner,
-  });
+  const mkTeam = (T, score, winner) => ({ ...baseTeam(T), score, winner: !!winner });
 
   const game = {
     id:              ev.id,
@@ -331,12 +324,8 @@ function parseUpcomingEvent(ev, sportKey, cfg) {
   if (!home || !away) return null;
 
   const mkTeam = (T) => ({
-    name:     T.team.shortDisplayName || T.team.displayName,
-    fullName: T.team.displayName,
-    abbr:     T.team.abbreviation,
-    logo:     T.team.logo,
-    color:    T.team.color ? `#${T.team.color}` : '#374151',
-    record:   T.records?.find(r => r.type === 'total')?.summary ?? null,
+    ...baseTeam(T),
+    record: T.records?.find(r => r.type === 'total')?.summary ?? null,
   });
 
   const rawOdds = co.odds?.[0];
@@ -371,17 +360,6 @@ function parseUpcomingEvent(ev, sportKey, cfg) {
   };
 }
 
-// Returns date strings for today and the past 4 days (5 days total)
-function getDateStrings() {
-  const dates = [];
-  for (let i = 0; i <= 4; i++) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    dates.push(d.toISOString().slice(0, 10).replace(/-/g, ''));
-  }
-  return dates;
-}
-
 // Returns date strings for tomorrow, today, and yesterday.
 // Three dates covers: upcoming (tomorrow), live (today), and edge cases like
 // games that started last night and finished after midnight (yesterday's date).
@@ -400,18 +378,14 @@ function getAllDateStrings() {
 // Estimates game progress 0.0–1.0 from status detail string
 function estimateProgress(sportKey, detail, comps, period) {
   try {
-    if (!detail || detail.includes('final') || detail.includes('ft')) return 1.0;
+    if (!detail || detail.includes('final') || /\bft\b/.test(detail)) return 1.0;
 
     // Soccer: period >= 3 means ET or penalties regardless of what shortDetail says
     // (live ET shows minute strings like "91'" that don't mention overtime)
-    if (['mls', 'epl', 'ucl', 'nwsl'].includes(sportKey) && period >= 3) return 1.0;
+    if (isSoccer(sportKey) && period >= 3) return 1.0;
 
     // Any overtime / extra time / penalties = full game played
-    if (/\bot\b/.test(detail) || /\b\d+ot\b/.test(detail) ||
-        detail.includes('overtime') ||
-        detail.includes('extra time') || detail.includes('penalties') ||
-        detail.includes('pens') || detail.includes('ft-et') ||
-        detail.includes('aet') || detail.includes('shootout')) return 1.0;
+    if (hasOTKeyword(detail)) return 1.0;
 
     // Intermission / end of period — treat as end of that period
     const isIntermission = detail.includes('intermission') ||
@@ -428,7 +402,6 @@ function estimateProgress(sportKey, detail, comps, period) {
         return Math.min(1.0, ((qtr - 1) * 15 + (15 - mins)) / 60);
       }
       if (qtr && isIntermission) return Math.min(1.0, (qtr * 15) / 60);
-      if (detail.includes('2nd') && isIntermission) return 0.5;
     }
 
     if (['nba', 'wnba', 'cbb', 'wcbb'].includes(sportKey)) {
@@ -471,13 +444,31 @@ function estimateProgress(sportKey, detail, comps, period) {
       if (detail.includes('3rd') || (!per && isIntermission)) return 1.0;
     }
 
-    if (['mls', 'epl', 'ucl', 'nwsl'].includes(sportKey)) {
+    if (isSoccer(sportKey)) {
       const minMatch = detail.match(/(\d+)'/);
       if (minMatch) return Math.min(1.0, parseInt(minMatch[1]) / 90);
       if (isIntermission) return 0.5;
     }
   } catch {}
   return 0.5;
+}
+
+// Shared team fields used by both the scored-game and upcoming-game shapes.
+function baseTeam(T) {
+  return {
+    name:     T.team.shortDisplayName || T.team.displayName,
+    fullName: T.team.displayName,
+    abbr:     T.team.abbreviation,
+    logo:     T.team.logo,
+    color:    T.team.color ? `#${T.team.color}` : '#374151',
+  };
+}
+
+// Shared overtime / extra-time / penalties keyword detector. Used by both the
+// isOT flag and progress estimation so the two can never drift apart.
+const OT_KEYWORD_RE = /\bot\b|\b\d+ot\b|overtime|extra time|penalties|pens|ft-et|aet|shootout/;
+function hasOTKeyword(detail) {
+  return OT_KEYWORD_RE.test(detail);
 }
 
 function parseMinutes(detail) {

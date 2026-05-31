@@ -1,6 +1,7 @@
 import { getCache, setCache } from './cache.js';
+import { CACHE_TTL, isSoccer } from '../config.js';
 
-const TIMELINE_TTL = 7 * 24 * 60 * 60; // 7 days
+const TIMELINE_TTL = CACHE_TTL.timeline;
 
 // Snapshot the current score for a live or recently finished game
 export async function recordSnapshot(game) {
@@ -54,6 +55,7 @@ const LATE_THRESHOLD = {
   epl:  70 / 90,
   ucl:  70 / 90,
   nwsl: 70 / 90,
+  intl: 70 / 90,
 };
 
 // Analyze timeline to produce momentum scoring signals
@@ -66,7 +68,9 @@ export function analyzeMomentum(timeline, sport) {
   let bonus      = 0;
 
   const sportKey   = sport?.sport || sport;
-  const lateThreshold = LATE_THRESHOLD[sportKey] ?? 0.75;
+  // Soccer leagues not explicitly listed fall back to the 70'/90' soccer mark;
+  // everything else defaults to the start of the final period (0.75).
+  const lateThreshold = LATE_THRESHOLD[sportKey] ?? (isSoccer(sportKey) ? 70 / 90 : 0.75);
 
   const first    = timeline[0];
   const last     = timeline[timeline.length - 1];
@@ -159,9 +163,11 @@ function getLeader(home, away) {
 
 // Sport-specific "close" threshold (within this many points = close)
 function closenessThreshold(sport) {
+  const key = sport?.sport || sport;
   const thresholds = {
-    nba: 5, nfl: 7, mlb: 1, nhl: 1,
-    mls: 1, epl: 1, ucl: 1, nwsl: 1, cfb: 7, cbb: 5,
+    nba: 5, wnba: 5, nfl: 7, mlb: 1, nhl: 1,
+    mls: 1, epl: 1, ucl: 1, nwsl: 1, intl: 1, cfb: 7, cbb: 5, wcbb: 5,
   };
-  return thresholds[sport?.sport || sport] ?? 2;
+  // Soccer leagues not explicitly listed are decided by a single goal.
+  return thresholds[key] ?? (isSoccer(key) ? 1 : 2);
 }

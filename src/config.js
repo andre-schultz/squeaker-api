@@ -64,7 +64,25 @@ export const SPORTS = {
     espnSport: 'basketball', espnLeague: 'womens-college-basketball',
     margins: { great: 3, good: 8, ok: 15, blowout: 25 },
   },
+  intl: {
+    name: "Int'l Friendly", emoji: '🌍',
+    espnSport: 'soccer', espnLeague: 'fifa.friendly',
+    margins: { great: 1, good: 2, ok: 3, blowout: 5 },
+    canDraw: true,
+  },
 };
+
+// ── Soccer leagues ────────────────────────────────────────────────────────────
+// Single source of truth for "is this sport soccer?". Explicit hardcoded list,
+// NOT derived from canDraw — a future non-soccer sport could allow draws (e.g. a
+// regular-season tie) without being soccer. When adding a new soccer league to
+// SPORTS above, add its key here too so every soccer-specific code path (OT
+// detection, progress estimation, thresholds) picks it up.
+export const SOCCER_SPORTS = new Set(['mls', 'epl', 'ucl', 'nwsl', 'intl']);
+
+export function isSoccer(sportKey) {
+  return SOCCER_SPORTS.has(sportKey);
+}
 
 // ── Cache TTLs (seconds) ──────────────────────────────────────────────────────
 export const CACHE_TTL = {
@@ -76,6 +94,10 @@ export const CACHE_TTL = {
   oddsTimeline:   7 * 24 * 3600, // 7 days — SGO live-odds WP timeline
   bettingPeak:    7 * 24 * 3600, // 7 days — peak betting score per game
   stats:          7 * 24 * 3600, // 7 days — team/goalie stats snapshots
+  statsBonus:     7 * 24 * 3600, // 7 days — stats-activity bonus per game
+  approxStats:    7 * 24 * 3600, // 7 days — fuzzed combined totals (finished games)
+  timeline:       7 * 24 * 3600, // 7 days — per-score-change timeline
+  history:        7 * 24 * 3600, // 7 days — per-finished-game history row
 };
 
 // ── Win-probability sliding-window lengths (per sport) ────────────────────────
@@ -94,7 +116,7 @@ export const WP_WINDOW_MS = {
   cfb: 1,
   mlb: 1,
   nhl: 1,
-  // soccer (mls/epl/ucl/nwsl) intentionally absent — ESPN doesn't expose WP for soccer
+  // soccer (mls/epl/ucl/nwsl/intl) intentionally absent — ESPN doesn't expose WP for soccer
 };
 
 // ── Feature flags ─────────────────────────────────────────────────────────────

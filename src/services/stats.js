@@ -1,7 +1,8 @@
 import { getCache, setCache } from './cache.js';
+import { CACHE_TTL } from '../config.js';
 
 const SUMMARY_BASE = 'https://site.api.espn.com/apis/site/v2/sports';
-const STATS_TTL = 7 * 24 * 60 * 60; // 7 days
+const STATS_TTL = CACHE_TTL.stats;
 
 // Fetch team + goalie stats from ESPN's summary endpoint.
 // Returns { home, away } with team stats and a goalies array, or null on failure.
