@@ -4,6 +4,7 @@ import cors from 'cors';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import gamesRouter from './src/routes/games.js';
+import metaRouter from './src/routes/meta.js';
 import { startWarmupSchedule } from './src/services/warmup.js';
 
 const app  = express();
@@ -49,6 +50,8 @@ app.get('/', (req, res) => res.json({ status: 'ok', service: 'Squeaker API' }));
 
 // Routes
 app.use('/api/games', requireApiKey, applyRateLimit, gamesRouter);
+// /api/leagues, /api/teams, /api/teams/search
+app.use('/api', requireApiKey, applyRateLimit, metaRouter);
 
 app.listen(PORT, () => {
   console.log(`Squeaker API running on port ${PORT}`);

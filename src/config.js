@@ -24,11 +24,18 @@ export const SPORTS = {
     name: 'College FB', emoji: '🏈',
     espnSport: 'football', espnLeague: 'college-football',
     margins: { great: 3, good: 7, ok: 14, blowout: 24 },
+    // College leagues have hundreds of teams across divisions. `conference`
+    // opts a league into: (1) limiting games to one division via the scoreboard
+    // `groups` id, and (2) grouping the Teams browser by conference using the
+    // standings `level`. group 80 = FBS; standings level 3 = FBS conferences.
+    conference: { group: 80, level: 3 },
   },
   cbb: {
     name: 'College BB', emoji: '🏀',
     espnSport: 'basketball', espnLeague: 'mens-college-basketball',
     margins: { great: 3, good: 8, ok: 15, blowout: 25 },
+    // group 50 = NCAA Division I; standings level 2 = D-I conferences.
+    conference: { group: 50, level: 2 },
   },
   mls: {
     name: 'MLS', emoji: '⚽',
@@ -63,6 +70,8 @@ export const SPORTS = {
     name: "Women's College BB", emoji: '🏀',
     espnSport: 'basketball', espnLeague: 'womens-college-basketball',
     margins: { great: 3, good: 8, ok: 15, blowout: 25 },
+    // group 50 = NCAA Division I; standings level 2 = D-I conferences.
+    conference: { group: 50, level: 2 },
   },
   intl: {
     name: "Int'l Friendly", emoji: '🌍',
@@ -82,6 +91,19 @@ export const SOCCER_SPORTS = new Set(['mls', 'epl', 'ucl', 'nwsl', 'intl']);
 
 export function isSoccer(sportKey) {
   return SOCCER_SPORTS.has(sportKey);
+}
+
+// ── ESPN gamecast/match link ──────────────────────────────────────────────────
+// Single source of truth for the "cast ↗" link. Derived entirely from the SPORTS
+// config so adding a league here makes its link work everywhere — no client change.
+// ESPN's web path equals espnLeague for every non-soccer league (nba, nfl,
+// college-football, mens-college-basketball, …); soccer always lives under
+// /soccer/match/. Returns null when the sport is unknown or the id is missing.
+export function espnGamecastUrl(sportKey, id) {
+  const cfg = SPORTS[sportKey];
+  if (!cfg || !id) return null;
+  if (cfg.espnSport === 'soccer') return `https://www.espn.com/soccer/match/_/gameId/${id}`;
+  return `https://www.espn.com/${cfg.espnLeague}/game/_/gameId/${id}`;
 }
 
 // ── Cache TTLs (seconds) ──────────────────────────────────────────────────────

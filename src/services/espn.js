@@ -1,7 +1,7 @@
 // Uses native global fetch (Node 18+). node-fetch v3 was previously implicated
 // in a slow memory leak via undici pool retention; native fetch hits the
 // same undici layer but without the wrapper.
-import { SPORTS, HOURS_WINDOW, AUDIT_ENABLED, isSoccer } from '../config.js';
+import { SPORTS, HOURS_WINDOW, AUDIT_ENABLED, isSoccer, espnGamecastUrl } from '../config.js';
 import { calcExcitement, calcExcitementBreakdown, detectComeback, excitementDesc } from './algorithm.js';
 import { recordSnapshot, analyzeMomentum } from './timeline.js';
 import {
@@ -87,7 +87,13 @@ async function fetchSportDate(key, cfg, date) {
   const games    = [];
   const upcoming = [];
   try {
-    const url = `${BASE}/${cfg.espnSport}/${cfg.espnLeague}/scoreboard${date ? `?dates=${date}` : ''}`;
+    // College leagues span multiple divisions; `conference.group` pins the
+    // scoreboard to one (FBS / D-I) so lower-division games never leak in.
+    const params = [];
+    if (date) params.push(`dates=${date}`);
+    if (cfg.conference?.group) params.push(`groups=${cfg.conference.group}`);
+    const qs  = params.length ? `?${params.join('&')}` : '';
+    const url = `${BASE}/${cfg.espnSport}/${cfg.espnLeague}/scoreboard${qs}`;
     const res = await fetch(url, { headers: { 'User-Agent': 'Squeaker/1.0' } });
     if (!res.ok) {
       // Drain body so the underlying socket is released.
@@ -262,6 +268,7 @@ async function parseEvent(ev, sportKey, cfg) {
     date:            ev.date,
     odds,                     // frozen pre-game line for display
     currentLiveActionBuzz,    // 0-100, computed from full WP history; retains last value after game ends
+    links:           { espn: espnGamecastUrl(sportKey, ev.id) }, // server-built "cast ↗" link
   };
 
   // ── Audit snapshot — captures everything that affects the excitement
@@ -357,6 +364,7 @@ function parseUpcomingEvent(ev, sportKey, cfg) {
     venue,
     broadcasts,
     odds,
+    links:      { espn: espnGamecastUrl(sportKey, ev.id) }, // server-built "cast ↗" link
   };
 }
 

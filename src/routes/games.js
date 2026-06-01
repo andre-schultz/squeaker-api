@@ -3,16 +3,26 @@ import { fetchAllGames } from '../services/espn.js';
 import { getCache, setCache } from '../services/cache.js';
 import { getStats, getStatsTimeline } from '../services/stats.js';
 import { getApproxStats } from '../services/approxStats.js';
-import { CACHE_TTL } from '../config.js';
+import { CACHE_TTL, espnGamecastUrl } from '../config.js';
 
 const router = express.Router();
+
+// Backfill the server-built "cast ↗" link on any cached game that predates the
+// links field (frozen done-games, stale cache). Cheap, idempotent — leaves
+// games that already carry links untouched.
+function withLinks(games) {
+  if (!Array.isArray(games)) return games;
+  return games.map(g =>
+    g && !g.links ? { ...g, links: { espn: espnGamecastUrl(g.sport, g.id) } } : g
+  );
+}
 
 // GET /api/games
 // Always served from cache. Falls back to live fetch if cache is empty.
 router.get('/', async (req, res) => {
   try {
     const cached = await getCache('games:all');
-    if (cached && cached.length > 0) return res.json(cached);
+    if (cached && cached.length > 0) return res.json(withLinks(cached));
 
     // Cache miss — fetch live and cache immediately
     console.log('[routes] Cache miss — fetching games live');
@@ -20,7 +30,7 @@ router.get('/', async (req, res) => {
     const hasLive = games.some(g => g.live);
     const ttl     = hasLive ? CACHE_TTL.liveGames : CACHE_TTL.finishedGames;
     if (games.length > 0) await setCache('games:all', games, ttl);
-    res.json(games);
+    res.json(withLinks(games));
   } catch (e) {
     console.error('GET /api/games error:', e.message);
     res.status(500).json({ error: 'Failed to fetch games' });
@@ -31,7 +41,7 @@ router.get('/', async (req, res) => {
 router.get('/upcoming', async (req, res) => {
   try {
     const cached = await getCache('games:upcoming');
-    res.json(cached || []);
+    res.json(withLinks(cached || []));
   } catch (e) {
     console.error('GET /api/games/upcoming error:', e.message);
     res.status(500).json({ error: 'Failed to fetch upcoming games' });
