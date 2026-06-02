@@ -1,6 +1,6 @@
 import express from 'express';
 import { fetchAllGames } from '../services/espn.js';
-import { getCache, setCache } from '../services/cache.js';
+import { getCache, getCacheMany, setCache } from '../services/cache.js';
 import { getStats, getStatsTimeline } from '../services/stats.js';
 import { getApproxStats } from '../services/approxStats.js';
 import { CACHE_TTL, espnGamecastUrl } from '../config.js';
@@ -45,6 +45,30 @@ router.get('/upcoming', async (req, res) => {
   } catch (e) {
     console.error('GET /api/games/upcoming error:', e.message);
     res.status(500).json({ error: 'Failed to fetch upcoming games' });
+  }
+});
+
+// GET /api/games/betting?ids=1,2,3 — betting scores for many games at once.
+// Returns { [id]: bettingData } for ids that have data, omitting the rest. This
+// is the batched form of /:id/betting: the client fetches every game's line in
+// ONE request instead of one-per-game, which used to flood the rate limiter.
+// (Defined before /:id/betting; "betting" is a single path segment so it can't
+// be captured as an :id.)
+router.get('/betting', async (req, res) => {
+  try {
+    const ids = String(req.query.ids || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (ids.length === 0) return res.json({});
+
+    const values = await getCacheMany(ids.map(id => `betting:${id}`));
+    const out = {};
+    ids.forEach((id, i) => { if (values[i]) out[id] = values[i]; });
+    res.json(out);
+  } catch (e) {
+    console.error('GET /api/games/betting (batch) error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch betting data' });
   }
 });
 
