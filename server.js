@@ -14,9 +14,9 @@ app.use(cors({ origin: ['https://squeaker.app', 'https://www.squeaker.app', 'htt
 app.use(express.json());
 
 // 120 requests per minute per IP — invisible to real users, blocks scrapers.
-// The mobile client batches its per-game lookups (see /api/games/betting), so a
-// normal screen load is only a handful of requests; the headroom covers rapid
-// manual refreshes without tripping the limit.
+// Clients load a screen in only a handful of requests (the games list and a
+// couple of metadata calls), so this leaves ample headroom for rapid manual
+// refreshes while still shutting down scrapers.
 const ratelimit = process.env.UPSTASH_REDIS_REST_URL
   ? new Ratelimit({
       redis: new Redis({

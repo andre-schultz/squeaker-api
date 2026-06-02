@@ -37,21 +37,6 @@ export async function getCache(key) {
   }
 }
 
-// Batch GET — fetch many keys in a single round trip via MGET. Returns values
-// in the same order as `keys`, with missing keys as null. Lets callers serve a
-// per-game collection (e.g. betting for every game) without N separate GETs.
-export async function getCacheMany(keys) {
-  if (!Array.isArray(keys) || keys.length === 0) return [];
-  try {
-    keys.forEach(k => _track('GET', k));
-    const vals = await redis.mget(...keys);
-    return vals.map(v => v || null);
-  } catch (e) {
-    console.error('Cache MGET error:', e.message);
-    return keys.map(() => null);
-  }
-}
-
 export async function setCache(key, value, ttlSeconds) {
   try {
     _track('SET', key);
