@@ -10,7 +10,6 @@
 //    error paths so undici sockets get released promptly.
 
 import { fetchAllEvents, preFreezeGames, pruneFrozenGame } from './espn.js';
-import { fetchSGOLiveEvents, recordOddsSnapshot, computeBettingScore } from './sgo.js';
 import { recordStatsSnapshot } from './stats.js';
 import { recordApproxStats } from './approxStats.js';
 import { recordStatsBonus } from './statsBonus.js';
@@ -18,7 +17,6 @@ import { setCache, getCache, drainCacheCounters } from './cache.js';
 import {
   CACHE_TTL,
   AUDIT_ENABLED,
-  SGO_ENABLED,
   SPORTS,
   HOURS_WINDOW,
 } from '../config.js';
@@ -33,7 +31,6 @@ function fmtCounters(counts) {
 }
 
 const GAME_REFRESH_MS = 3 * 60 * 1000;     // 3 min, active hours
-const ODDS_REFRESH_MS = 10 * 60 * 1000;    // 10 min — matches SGO update frequency
 const STATS_REFRESH_MS = 3 * 60 * 1000;    // 3 min — same cadence as game cycle
 const OFF_REFRESH_MS = 10 * 60 * 1000;     // 10 min, off hours
 const TICK_MS = 60 * 1000;                  // wake up once a minute
@@ -233,82 +230,6 @@ async function runStatsCycle() {
   }
 }
 
-// ── Odds cycle (poll SGO live lines, record WP timeline, update betting score) ─
-//
-// Only fires when SGO_ENABLED (SGO_API_KEY is set) AND at least one game is
-// currently live — this keeps object usage minimal on the free tier.
-// One SGO call fetches all live events in a single request (1 object per game
-// returned). Per-game matching is done client-side against games:all.
-
-let oddsRunning = false;
-
-async function runOddsCycle() {
-  if (oddsRunning) return;
-  oddsRunning = true;
-  const t0 = Date.now();
-  try {
-    const games    = (await getCache('games:all')) || [];
-    const liveGames = games.filter(g => g.live);
-    if (liveGames.length === 0) return; // no live games — don't burn objects
-
-    const sgoEvents = await fetchSGOLiveEvents(liveGames);
-    if (sgoEvents.length === 0) {
-      console.log('[odds] SGO returned no live events');
-      return;
-    }
-
-    let matched = 0;
-    let newPeaks = 0;
-    for (const game of liveGames) {
-      const timeline = await recordOddsSnapshot(game, sgoEvents);
-      if (!timeline) continue;
-      matched++;
-
-      const breakdown = computeBettingScore(timeline);
-      // Only update peak once we have at least 2 real SGO reads — a single
-      // read has nothing to compare against and would lock in a zero peak.
-      const sgoCount = timeline.filter(s => !s.isBaseline).length;
-      const { replaced } = sgoCount >= 2
-        ? await updatePeakBetting(game, breakdown)
-        : { replaced: false };
-      if (replaced) newPeaks++;
-    }
-
-    console.log(
-      `[odds] cycle: ${liveGames.length} live, ${matched} matched, ` +
-      `${newPeaks} new peaks, ${sgoEvents.length} SGO events (${Date.now() - t0}ms)`
-    );
-    console.log(`[redis] odds-cycle — ${fmtCounters(drainCacheCounters())}`);
-  } catch (e) {
-    console.error('[odds] cycle failed:', e.message);
-    drainCacheCounters();
-  } finally {
-    oddsRunning = false;
-  }
-}
-
-// Keep the highest betting score seen during the game's live period.
-async function updatePeakBetting(game, breakdown) {
-  const key  = `betting:${game.id}`;
-  const prev = await getCache(key);
-
-  const current = {
-    current:       breakdown.score,
-    drift:         breakdown.drift,
-    velocity:      breakdown.velocity,
-    openingHomeWP: breakdown.openingHomeWP,
-    currentHomeWP: breakdown.currentHomeWP,
-    windowSamples: breakdown.windowSamples,
-    peak:          Math.max(breakdown.score, prev?.peak ?? 0),
-    recordedAt:    new Date().toISOString(),
-    wasLive:       true,
-  };
-
-  const replaced = breakdown.score > (prev?.peak ?? -1);
-  await setCache(key, current, CACHE_TTL.bettingPeak);
-  return { replaced };
-}
-
 // ── Candidate filters ─────────────────────────────────────────────────────────
 
 // True while a game is worth fetching stats for: started but not yet stale.
@@ -324,7 +245,6 @@ function isActiveCandidate(game) {
 // ── Tick loop ─────────────────────────────────────────────────────────────────
 
 let lastGameRun = 0;
-let lastOddsRun = 0;
 let lastStatsRun = 0;
 
 function tick() {
@@ -335,10 +255,6 @@ function tick() {
   if (now - lastGameRun >= gameInterval) {
     lastGameRun = now;
     runGameCycle();
-  }
-  if (SGO_ENABLED && now - lastOddsRun >= ODDS_REFRESH_MS) {
-    lastOddsRun = now;
-    runOddsCycle();
   }
   if (now - lastStatsRun >= statsInterval) {
     lastStatsRun = now;
@@ -352,11 +268,6 @@ export async function warmCache() {
     `AUDIT_ENABLED=${AUDIT_ENABLED} (raw=${JSON.stringify(process.env.AUDIT_ENABLED)})`
   );
   await runGameCycle();
-  if (SGO_ENABLED) {
-    await runOddsCycle();
-  } else {
-    console.log('[odds] disabled (SGO_API_KEY not set) — skipping');
-  }
   await runStatsCycle();
   console.log('[warmup] initial warm complete');
 }

@@ -113,8 +113,6 @@ export const CACHE_TTL = {
   probabilities:  7 * 24 * 3600, // 7 days — WP timeline, mirrors score timeline
   frozenOdds:     7 * 24 * 3600, // 7 days — pre-game line, fetched once
   audit:          3 * 24 * 3600, // 3 days — algorithm audit log
-  oddsTimeline:   7 * 24 * 3600, // 7 days — SGO live-odds WP timeline
-  bettingPeak:    7 * 24 * 3600, // 7 days — peak betting score per game
   stats:          7 * 24 * 3600, // 7 days — team/goalie stats snapshots
   statsBonus:     7 * 24 * 3600, // 7 days — stats-activity bonus per game
   approxStats:    7 * 24 * 3600, // 7 days — fuzzed combined totals (finished games)
@@ -156,11 +154,5 @@ export const AUDIT_ENABLED = isTruthy(process.env.AUDIT_ENABLED);
 
 // ── Time window ───────────────────────────────────────────────────────────────
 export const HOURS_WINDOW = 120; // show games from last 5 days
-
-// ── SportsGameOdds live odds ──────────────────────────────────────────────────
-// Enabled automatically when SGO_API_KEY is present. No separate flag needed —
-// the key being set is the opt-in. Polls live in-game moneylines every 10 min
-// (matching SGO's free-tier update frequency) for all live games.
-export const SGO_ENABLED = !!process.env.SGO_API_KEY;
 
 

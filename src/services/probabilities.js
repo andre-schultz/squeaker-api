@@ -195,3 +195,24 @@ function clamp01(x) {
   if (typeof x !== 'number' || isNaN(x)) return null;
   return Math.max(0, Math.min(1, x));
 }
+
+// ── Moneyline → win-probability helpers ───────────────────────────────────────
+// Used to derive a pre-game win probability from ESPN's frozen money line when
+// a play-by-play WP timeline was never recorded (upset-detection fallback in
+// espn.js).
+
+function mlToRawProb(ml) {
+  if (typeof ml !== 'number' || ml === 0) return null;
+  return ml > 0 ? 100 / (ml + 100) : (-ml) / (-ml + 100);
+}
+
+// Convert a home+away ML pair to vig-normalised [0,1] probabilities so
+// homeWP + awayWP = 1.0 regardless of the book's margin.
+export function mlPairToWP(homeML, awayML) {
+  const rawHome = mlToRawProb(homeML);
+  const rawAway = mlToRawProb(awayML);
+  if (rawHome == null || rawAway == null) return null;
+  const total = rawHome + rawAway;
+  if (total === 0) return null;
+  return { homeWP: rawHome / total, awayWP: rawAway / total };
+}

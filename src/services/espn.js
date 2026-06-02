@@ -8,11 +8,11 @@ import {
   fetchAndStoreWPTimeline,
   analyzeUpset,
   computeActionScore,
+  mlPairToWP,
 } from './probabilities.js';
 import { getOrFetchOdds } from './odds.js';
 import { recordAudit } from './audit.js';
 import { getStatsBonus } from './statsBonus.js';
-import { mlPairToWP } from './sgo.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 
