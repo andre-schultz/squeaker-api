@@ -24,7 +24,7 @@ RANGES = {
     'wcbb': dict(points=(116, 154), threePointers=( 8, 17), stealsBlocks=(17, 30)),
 }
 
-MARGINS = { 'nba': (3,8,15,25), 'wnba': (3,8,15,25), 'cbb': (3,8,15,25), 'wcbb': (3,8,15,25) }
+MARGINS = { 'nba': (3,8,15,30), 'wnba': (3,8,15,30), 'cbb': (3,8,15,30), 'wcbb': (3,8,15,30) }
 
 def nr(value, floor, ceiling):
     return max(0.0, min(1.0, ((value or 0) - floor) / (ceiling - floor)))

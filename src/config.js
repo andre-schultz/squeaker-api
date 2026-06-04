@@ -3,7 +3,7 @@ export const SPORTS = {
   nba: {
     name: 'NBA', emoji: '🏀',
     espnSport: 'basketball', espnLeague: 'nba',
-    margins: { great: 3, good: 8, ok: 15, blowout: 25 },
+    margins: { great: 3, good: 8, ok: 15, blowout: 30 },
   },
   nhl: {
     name: 'NHL', emoji: '🏒',
@@ -33,7 +33,7 @@ export const SPORTS = {
   cbb: {
     name: 'College BB', emoji: '🏀',
     espnSport: 'basketball', espnLeague: 'mens-college-basketball',
-    margins: { great: 3, good: 8, ok: 15, blowout: 25 },
+    margins: { great: 3, good: 8, ok: 15, blowout: 30 },
     // group 50 = NCAA Division I; standings level 2 = D-I conferences.
     conference: { group: 50, level: 2 },
   },
@@ -58,7 +58,7 @@ export const SPORTS = {
   wnba: {
     name: 'WNBA', emoji: '🏀',
     espnSport: 'basketball', espnLeague: 'wnba',
-    margins: { great: 3, good: 8, ok: 15, blowout: 25 },
+    margins: { great: 3, good: 8, ok: 15, blowout: 30 },
   },
   nwsl: {
     name: 'NWSL', emoji: '⚽',
@@ -69,7 +69,7 @@ export const SPORTS = {
   wcbb: {
     name: "Women's College BB", emoji: '🏀',
     espnSport: 'basketball', espnLeague: 'womens-college-basketball',
-    margins: { great: 3, good: 8, ok: 15, blowout: 25 },
+    margins: { great: 3, good: 8, ok: 15, blowout: 30 },
     // group 50 = NCAA Division I; standings level 2 = D-I conferences.
     conference: { group: 50, level: 2 },
   },
