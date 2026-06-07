@@ -198,7 +198,7 @@ async function parseEvent(ev, sportKey, cfg) {
   ]);
 
   // Analyze momentum from full scoring timeline
-  const { momentumBonus, signals } = analyzeMomentum(timeline, { sport: sportKey });
+  const { momentumBonus, signals } = analyzeMomentum(timeline, { sport: sportKey }, { done, progress });
 
   // ── Win-probability signal ──────────────────────────────────────────
   let { upsetBonus, winnerPreGameWP } = analyzeUpset(wpTimeline, {

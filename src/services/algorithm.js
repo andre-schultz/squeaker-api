@@ -4,12 +4,12 @@
 //                             Other sports: max 65 at margin=1, linear below.
 // Comeback:          +10 pts
 // OT:                 +5 pts
-// Momentum bonus:    +20 pts  (late goals, lead changes, time spent close)
+// Momentum bonus:    +25 pts  (late goals, lead changes, time spent close)
 // Upset bonus:       +10 pts  (underdog won outright)
 // Stats activity:   +20 pts  (computed from game stats snapshot; extra-high
 //                             stats above the p90 ceiling can push past 15)
 //
-// Theoretical raw max if all bonuses fire: 130. Clamped to 100 at the end.
+// Theoretical raw max if all bonuses fire: 135. Clamped to 100 at the end.
 // Bonuses are independent — each contributes its full value if earned.
 // WP-drama is tracked separately as part of the Action score, not here.
 

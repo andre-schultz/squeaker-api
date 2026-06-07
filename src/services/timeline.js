@@ -34,32 +34,24 @@ export async function getTimeline(gameId) {
   return await getCache(`timeline:${gameId}`) || [];
 }
 
-// Progress threshold above which a score counts as "late" for each sport.
-// Based on game structure, not wall-clock time:
-//   MLB  — start of 8th inning  (7 complete innings / 9)
-//   NHL  — start of 3rd period  (2 complete periods / 3)
-//   NBA/WNBA — start of 4th quarter (3 complete quarters / 4 = 0.75)
-//   NFL/CFB  — start of 4th quarter
-//   CBB/WCBB — 2nd half, past midpoint (0.75 of two 20-min halves)
-//   Soccer   — 70th minute (70 / 90)
-const LATE_THRESHOLD = {
-  mlb:  7 / 9,   // ≈ 0.778
-  nhl:  2 / 3,   // ≈ 0.667
-  nba:  0.75,
-  wnba: 0.75,
-  nfl:  0.75,
-  cfb:  0.75,
-  cbb:  0.75,
-  wcbb: 0.75,
-  mls:  70 / 90, // ≈ 0.778
-  epl:  70 / 90,
-  ucl:  70 / 90,
-  nwsl: 70 / 90,
-  intl: 70 / 90,
-};
+// Linear "lateness" weight for a scoring event, based on how far into the game
+// it happened. Zero at (or before) the midpoint, ramping linearly to 1.0 at the
+// final whistle. This replaces the old binary late-threshold cliff: a goal in
+// the 70th minute now counts almost as much as one in the 89th, and one at the
+// hour mark still earns partial credit instead of nothing.
+//   progress 0.50 → 0.0
+//   progress 0.75 → 0.5
+//   progress 1.00 → 1.0
+function lateWeight(progress) {
+  if (progress == null) return null; // caller substitutes a time-based fallback
+  return Math.max(0, Math.min(1, (progress - 0.5) / 0.5));
+}
 
-// Analyze timeline to produce momentum scoring signals
-export function analyzeMomentum(timeline, sport) {
+// Analyze timeline to produce momentum scoring signals.
+// `opts.done` / `opts.progress` describe the game as a whole (not the last
+// snapshot) so the whole-game closeness fraction can extend to the true end of
+// the game — the final margin holds from the last scoring play to the whistle.
+export function analyzeMomentum(timeline, sport, opts = {}) {
   if (!timeline || timeline.length < 2) {
     return { momentumBonus: 0, signals: [] };
   }
@@ -67,92 +59,98 @@ export function analyzeMomentum(timeline, sport) {
   const signals  = [];
   let bonus      = 0;
 
-  const sportKey   = sport?.sport || sport;
-  // Soccer leagues not explicitly listed fall back to the 70'/90' soccer mark;
-  // everything else defaults to the start of the final period (0.75).
-  const lateThreshold = LATE_THRESHOLD[sportKey] ?? (isSoccer(sportKey) ? 70 / 90 : 0.75);
+  const closeThresh = closenessThreshold(sport);
 
   const first    = timeline[0];
   const last     = timeline[timeline.length - 1];
-  const duration = last.t - first.t; // total time tracked in ms (used for tied/close %)
+  const duration = last.t - first.t; // wall-clock span; only a progress fallback now
 
-  let leadChanges    = 0;
-  let tiedDuration   = 0;
-  let closeDuration  = 0; // within 1 score
-  let lateGoals      = 0;
-  let prevLeader     = getLeader(first.home, first.away);
+  let leadChanges = 0;
+  let prevLeader  = getLeader(first.home, first.away);
+
+  // Progress (0–1) for a snapshot, falling back to its elapsed-time fraction for
+  // old snapshots written before `progress` was added to the schema.
+  const progOf = (s) =>
+    s.progress != null
+      ? s.progress
+      : (duration > 0 ? (s.t - first.t) / duration : 0);
+
+  // Fraction of the WHOLE game spent close / tied, measured with progress as the
+  // clock. A snapshot's margin holds from its progress until the next snapshot
+  // (the score only changes at snapshots); the final margin is carried to the
+  // end of regulation below for finished games. Because it's a running fraction
+  // of the full game it ramps up as the game stays close, and is comparable
+  // across sports.
+  let closeFrac = 0;
 
   for (let i = 1; i < timeline.length; i++) {
     const prev    = timeline[i - 1];
     const curr    = timeline[i];
-    const segMs   = curr.t - prev.t;
     const margin  = Math.abs(curr.home - curr.away);
     const leader  = getLeader(curr.home, curr.away);
 
-    // A snapshot is "late" when its stored progress meets the sport threshold.
-    // Fall back to the old time-based heuristic for snapshots written before
-    // progress was added to the schema (curr.progress === null/undefined).
-    const isLate = curr.progress != null
-      ? curr.progress >= lateThreshold
-      : curr.t >= (last.t - duration * 0.25);
+    // The previous score held for the span between the two snapshots.
+    const span       = Math.max(0, progOf(curr) - progOf(prev));
+    const prevMargin = Math.abs(prev.home - prev.away);
+    if (prevMargin <= closeThresh) closeFrac += span;
 
-    // Track time spent tied
-    if (margin === 0) tiedDuration += segMs;
+    // How much this event counts toward the late-drama bonuses, ramped linearly
+    // from the midpoint to the final whistle.
+    const w = lateWeight(progOf(curr));
 
-    // Track time spent close (within 1 score/goal)
-    if (margin <= closenessThreshold(sport)) closeDuration += segMs;
+    // A lead change is itself the go-ahead score, so it's scored once below
+    // rather than paid separately. We still *count* it here for the
+    // multiple-lead-changes whole-game bonus.
+    const isLeadChange = leader !== 'tied' && prevLeader !== 'tied' && leader !== prevLeader;
+    if (isLeadChange) leadChanges++;
 
-    // Detect lead change
-    if (leader !== 'tied' && prevLeader !== 'tied' && leader !== prevLeader) {
-      leadChanges++;
-      if (isLate) {
-        signals.push('Late lead change');
-        bonus += 8;
-      }
-    }
-
-    // Detect goal/score in late window
+    // One bonus per scoring event, chosen by its most significant effect and
+    // scaled by how late it happened (w). Priority: a lead flips hands >
+    // equalizer > taking the lead from a tie > a goal that keeps it close.
     const scored = (curr.home + curr.away) > (prev.home + prev.away);
-    if (scored && isLate) {
-      lateGoals++;
-      const wasClose = Math.abs(prev.home - prev.away) <= closenessThreshold(sport);
-      if (wasClose) {
-        signals.push('Late goal in close game');
-        bonus += 10;
-      } else if (margin === 0) {
-        signals.push('Late equalizer');
-        bonus += 12;
-      } else if (margin <= closenessThreshold(sport)) {
-        signals.push('Late go-ahead goal');
-        bonus += 10;
+    if (scored && w > 0) {
+      let base = 0, label = '';
+      if (isLeadChange)               { base = 10; label = 'Late lead change'; }
+      else if (margin === 0)          { base = 8;  label = 'Late equalizer'; }
+      else if (leader !== prevLeader) { base = 7;  label = 'Late go-ahead goal'; } // took lead from a tie
+      else if (margin <= closeThresh) { base = 4;  label = 'Late goal in close game'; }
+      if (base > 0) {
+        signals.push(label);
+        bonus += base * w;
       }
     }
 
     prevLeader = leader !== 'tied' ? leader : prevLeader;
   }
 
-  // Bonus for lots of time spent tied or close
-  const tiedPct  = tiedDuration / duration;
-  const closePct = closeDuration / duration;
+  // Carry the final score from the last snapshot to the end of the game: a
+  // finished game runs to 1.0, a live game to its current progress. The score
+  // only changes at snapshots, so the last margin held over this whole gap.
+  const endProg    = opts.done ? 1.0 : Math.max(progOf(last), opts.progress ?? progOf(last));
+  const tailSpan   = Math.max(0, endProg - progOf(last));
+  const lastMargin = Math.abs(last.home - last.away);
+  if (lastMargin <= closeThresh) closeFrac += tailSpan;
 
-  if (tiedPct > 0.5) {
-    signals.push('Game was tied for majority of time');
-    bonus += 8;
-  } else if (closePct > 0.6) {
-    signals.push('Game was close for majority of time');
-    bonus += 5;
+  // Whole-game closeness: linear in the fraction of the game spent close,
+  // scaled to a max of 10 (close wire-to-wire ⇒ 10). Time spent exactly tied is
+  // a subset of close time, so a tie-heavy game is already rewarded here.
+  const closeBonus = Math.min(10, closeFrac * 10);
+  if (closeBonus > 0) {
+    signals.push(`Game stayed close (${Math.round(closeBonus)}/10)`);
+    bonus += closeBonus;
   }
 
-  // Bonus for multiple lead changes
+  // Multiple lead changes over the whole game (downgraded from 6/3 to 4/2).
   if (leadChanges >= 3) {
     signals.push(`${leadChanges} lead changes`);
-    bonus += 6;
+    bonus += 4;
   } else if (leadChanges >= 2) {
     signals.push(`${leadChanges} lead changes`);
-    bonus += 3;
+    bonus += 2;
   }
 
-  return { momentumBonus: Math.min(bonus, 20), signals }; // cap momentum bonus at 20
+  // Cap momentum bonus at 25, then round (event bonuses are now fractional).
+  return { momentumBonus: Math.round(Math.min(bonus, 25)), signals };
 }
 
 function getLeader(home, away) {
