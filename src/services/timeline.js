@@ -47,6 +47,16 @@ function lateWeight(progress) {
   return Math.max(0, Math.min(1, (progress - 0.5) / 0.5));
 }
 
+// Basketball uses a different per-event momentum signal. High-frequency scoring
+// makes every-possession ties and lead changes noise, so the only event that
+// counts is a "comeback surge" — a team that had been behind climbing to a
+// BB_SURGE_THRESHOLD+ lead. It re-arms (and can fire again) only after that team
+// falls behind again. Close-for-majority still applies; the lead-change tally
+// does not.
+const BASKETBALL = new Set(['nba', 'wnba', 'cbb', 'wcbb']);
+const BB_SURGE_THRESHOLD = 5;  // lead (points) a comeback must reach to score
+const BB_SURGE_BASE      = 10; // points per late comeback surge (× lateness weight)
+
 // Analyze timeline to produce momentum scoring signals.
 // `opts.done` / `opts.progress` describe the game as a whole (not the last
 // snapshot) so the whole-game closeness fraction can extend to the true end of
@@ -59,7 +69,9 @@ export function analyzeMomentum(timeline, sport, opts = {}) {
   const signals  = [];
   let bonus      = 0;
 
-  const closeThresh = closenessThreshold(sport);
+  const sportKey     = sport?.sport || sport;
+  const isBasketball = BASKETBALL.has(sportKey);
+  const closeThresh  = closenessThreshold(sport);
 
   const first    = timeline[0];
   const last     = timeline[timeline.length - 1];
@@ -67,6 +79,15 @@ export function analyzeMomentum(timeline, sport, opts = {}) {
 
   let leadChanges = 0;
   let prevLeader  = getLeader(first.home, first.away);
+
+  // Basketball comeback-surge state: a team is "armed" once it has been behind,
+  // and fires when it reaches a 5+ lead (then must fall behind again to re-arm).
+  let homeBehind = false, awayBehind = false;
+  if (isBasketball) {
+    const d0 = first.home - first.away;
+    if (d0 < 0) homeBehind = true;
+    if (d0 > 0) awayBehind = true;
+  }
 
   // Progress (0–1) for a snapshot, falling back to its elapsed-time fraction for
   // old snapshots written before `progress` was added to the schema.
@@ -104,19 +125,36 @@ export function analyzeMomentum(timeline, sport, opts = {}) {
     const isLeadChange = leader !== 'tied' && prevLeader !== 'tied' && leader !== prevLeader;
     if (isLeadChange) leadChanges++;
 
-    // One bonus per scoring event, chosen by its most significant effect and
-    // scaled by how late it happened (w). Priority: a lead flips hands >
-    // equalizer > taking the lead from a tie > a goal that keeps it close.
-    const scored = (curr.home + curr.away) > (prev.home + prev.away);
-    if (scored && w > 0) {
-      let base = 0, label = '';
-      if (isLeadChange)               { base = 10; label = 'Late lead change'; }
-      else if (margin === 0)          { base = 8;  label = 'Late equalizer'; }
-      else if (leader !== prevLeader) { base = 7;  label = 'Late go-ahead goal'; } // took lead from a tie
-      else if (margin <= closeThresh) { base = 4;  label = 'Late goal in close game'; }
-      if (base > 0) {
-        signals.push(label);
-        bonus += base * w;
+    if (isBasketball) {
+      // Comeback surge: a team that had been behind reaches a 5+ lead. Scored
+      // once per surge, weighted by lateness; re-arms only after the team falls
+      // behind again. Both directions are tracked independently, so a lead that
+      // swings back the other way to 5+ fires a second time.
+      const d = curr.home - curr.away;
+      if (d < 0) homeBehind = true;
+      if (d > 0) awayBehind = true;
+      if (d >= BB_SURGE_THRESHOLD && homeBehind) {
+        if (w > 0) { signals.push('Late comeback to 5+ lead'); bonus += BB_SURGE_BASE * w; }
+        homeBehind = false;
+      } else if (d <= -BB_SURGE_THRESHOLD && awayBehind) {
+        if (w > 0) { signals.push('Late comeback to 5+ lead'); bonus += BB_SURGE_BASE * w; }
+        awayBehind = false;
+      }
+    } else {
+      // One bonus per scoring event, chosen by its most significant effect and
+      // scaled by how late it happened (w). Priority: a lead flips hands >
+      // equalizer > taking the lead from a tie > a goal that keeps it close.
+      const scored = (curr.home + curr.away) > (prev.home + prev.away);
+      if (scored && w > 0) {
+        let base = 0, label = '';
+        if (isLeadChange)               { base = 10; label = 'Late lead change'; }
+        else if (margin === 0)          { base = 8;  label = 'Late equalizer'; }
+        else if (leader !== prevLeader) { base = 7;  label = 'Late go-ahead goal'; } // took lead from a tie
+        else if (margin <= closeThresh) { base = 4;  label = 'Late goal in close game'; }
+        if (base > 0) {
+          signals.push(label);
+          bonus += base * w;
+        }
       }
     }
 
@@ -141,12 +179,16 @@ export function analyzeMomentum(timeline, sport, opts = {}) {
   }
 
   // Multiple lead changes over the whole game (downgraded from 6/3 to 4/2).
-  if (leadChanges >= 3) {
-    signals.push(`${leadChanges} lead changes`);
-    bonus += 4;
-  } else if (leadChanges >= 2) {
-    signals.push(`${leadChanges} lead changes`);
-    bonus += 2;
+  // Skipped for basketball, where frequent lead changes are noise — the
+  // comeback-surge events above are basketball's only per-event signal.
+  if (!isBasketball) {
+    if (leadChanges >= 3) {
+      signals.push(`${leadChanges} lead changes`);
+      bonus += 4;
+    } else if (leadChanges >= 2) {
+      signals.push(`${leadChanges} lead changes`);
+      bonus += 2;
+    }
   }
 
   // Cap momentum bonus at 25, then round (event bonuses are now fractional).
@@ -164,7 +206,7 @@ function closenessThreshold(sport) {
   const key = sport?.sport || sport;
   const thresholds = {
     nba: 5, wnba: 5, nfl: 7, mlb: 1, nhl: 1,
-    mls: 1, epl: 1, ucl: 1, nwsl: 1, intl: 1, cfb: 7, cbb: 5, wcbb: 5,
+    mls: 1, epl: 1, ucl: 1, nwsl: 1, intl: 1, wc: 1, cfb: 7, cbb: 5, wcbb: 5,
   };
   // Soccer leagues not explicitly listed are decided by a single goal.
   return thresholds[key] ?? (isSoccer(key) ? 1 : 2);
