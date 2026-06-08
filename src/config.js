@@ -79,6 +79,12 @@ export const SPORTS = {
     margins: { great: 1, good: 2, ok: 3, blowout: 5 },
     canDraw: true,
   },
+  wc: {
+    name: 'World Cup', emoji: '🏆',
+    espnSport: 'soccer', espnLeague: 'fifa.world',
+    margins: { great: 1, good: 2, ok: 3, blowout: 5 },
+    canDraw: true,
+  },
 };
 
 // ── Soccer leagues ────────────────────────────────────────────────────────────
@@ -87,7 +93,7 @@ export const SPORTS = {
 // regular-season tie) without being soccer. When adding a new soccer league to
 // SPORTS above, add its key here too so every soccer-specific code path (OT
 // detection, progress estimation, thresholds) picks it up.
-export const SOCCER_SPORTS = new Set(['mls', 'epl', 'ucl', 'nwsl', 'intl']);
+export const SOCCER_SPORTS = new Set(['mls', 'epl', 'ucl', 'nwsl', 'intl', 'wc']);
 
 export function isSoccer(sportKey) {
   return SOCCER_SPORTS.has(sportKey);

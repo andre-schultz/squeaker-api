@@ -132,7 +132,7 @@ function weighted(stats, weights) {
 }
 
 const BY_SPORT = {
-  epl: soccer, mls: soccer, ucl: soccer, nwsl: soccer, intl: soccer,
+  epl: soccer, mls: soccer, ucl: soccer, nwsl: soccer, intl: soccer, wc: soccer,
   nhl,
   mlb,
   nba,
