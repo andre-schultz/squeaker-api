@@ -49,12 +49,12 @@ function lateWeight(progress) {
 
 // Basketball uses a different per-event momentum signal. High-frequency scoring
 // makes every-possession ties and lead changes noise, so the only event that
-// counts is a "comeback surge" — a team that had been behind climbing to a
-// BB_SURGE_THRESHOLD+ lead. It re-arms (and can fire again) only after that team
-// falls behind again. Close-for-majority still applies; the lead-change tally
-// does not.
+// counts is a "comeback surge" — a team that had been behind by
+// BB_SURGE_THRESHOLD+ climbing all the way back to a tie or the lead. It re-arms
+// (and can fire again) only after that team falls behind by that margin again.
+// Close-for-majority still applies; the lead-change tally does not.
 const BASKETBALL = new Set(['nba', 'wnba', 'cbb', 'wcbb']);
-const BB_SURGE_THRESHOLD = 5;  // lead (points) a comeback must reach to score
+const BB_SURGE_THRESHOLD = 5;  // deficit (points) a comeback must erase to score
 const BB_SURGE_BASE      = 10; // points per late comeback surge (× lateness weight)
 
 // Analyze timeline to produce momentum scoring signals.
@@ -80,13 +80,14 @@ export function analyzeMomentum(timeline, sport, opts = {}) {
   let leadChanges = 0;
   let prevLeader  = getLeader(first.home, first.away);
 
-  // Basketball comeback-surge state: a team is "armed" once it has been behind,
-  // and fires when it reaches a 5+ lead (then must fall behind again to re-arm).
-  let homeBehind = false, awayBehind = false;
+  // Basketball comeback-surge state: a team is "armed" once it has been behind
+  // by BB_SURGE_THRESHOLD+, and fires when it climbs back to a tie or the lead
+  // (then must fall behind by that margin again to re-arm).
+  let homeArmed = false, awayArmed = false;
   if (isBasketball) {
     const d0 = first.home - first.away;
-    if (d0 < 0) homeBehind = true;
-    if (d0 > 0) awayBehind = true;
+    if (d0 <= -BB_SURGE_THRESHOLD) homeArmed = true;
+    if (d0 >=  BB_SURGE_THRESHOLD) awayArmed = true;
   }
 
   // Progress (0–1) for a snapshot, falling back to its elapsed-time fraction for
@@ -126,19 +127,19 @@ export function analyzeMomentum(timeline, sport, opts = {}) {
     if (isLeadChange) leadChanges++;
 
     if (isBasketball) {
-      // Comeback surge: a team that had been behind reaches a 5+ lead. Scored
-      // once per surge, weighted by lateness; re-arms only after the team falls
-      // behind again. Both directions are tracked independently, so a lead that
-      // swings back the other way to 5+ fires a second time.
+      // Comeback surge: a team that had been behind by 5+ climbs back to a tie
+      // or the lead. Scored once per surge, weighted by lateness; re-arms only
+      // after the team falls behind by 5+ again. Both directions are tracked
+      // independently, so a game that swings back the other way fires again.
       const d = curr.home - curr.away;
-      if (d < 0) homeBehind = true;
-      if (d > 0) awayBehind = true;
-      if (d >= BB_SURGE_THRESHOLD && homeBehind) {
-        if (w > 0) { signals.push('Late comeback to 5+ lead'); bonus += BB_SURGE_BASE * w; }
-        homeBehind = false;
-      } else if (d <= -BB_SURGE_THRESHOLD && awayBehind) {
-        if (w > 0) { signals.push('Late comeback to 5+ lead'); bonus += BB_SURGE_BASE * w; }
-        awayBehind = false;
+      if (d <= -BB_SURGE_THRESHOLD) homeArmed = true;
+      if (d >=  BB_SURGE_THRESHOLD) awayArmed = true;
+      if (d >= 0 && homeArmed) {
+        if (w > 0) { signals.push('Late comeback to tie/lead'); bonus += BB_SURGE_BASE * w; }
+        homeArmed = false;
+      } else if (d <= 0 && awayArmed) {
+        if (w > 0) { signals.push('Late comeback to tie/lead'); bonus += BB_SURGE_BASE * w; }
+        awayArmed = false;
       }
     } else {
       // One bonus per scoring event, chosen by its most significant effect and
