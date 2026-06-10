@@ -2,21 +2,25 @@
 // Closeness:        0-65 pts  (dominant factor; maxed automatically when isOT)
 //                             Soccer: max 60, flat for margin 0–1, linear below.
 //                             Other sports: max 65 at margin=1, linear below.
-// Comeback:          +10 pts
+//                             The margin passed in is "scoring margin" — empty-net
+//                             goals are stripped upstream so garbage-time ENGs
+//                             don't inflate the gap (see espn.js).
+// Comeback:         0-15 pts  (scaled by deficit erased × progress; can fire
+//                             multiple times, summed and capped — see analyzeComeback)
 // OT:                 +5 pts
 // Momentum bonus:    +25 pts  (late goals, lead changes, time spent close)
 // Upset bonus:       +10 pts  (underdog won outright)
 // Stats activity:   +20 pts  (computed from game stats snapshot; extra-high
 //                             stats above the p90 ceiling can push past 15)
 //
-// Theoretical raw max if all bonuses fire: 135. Clamped to 100 at the end.
+// Theoretical raw max if all bonuses fire: 140. Clamped to 100 at the end.
 // Bonuses are independent — each contributes its full value if earned.
 // WP-drama is tracked separately as part of the Action score, not here.
 
 export function calcExcitement(
   margin,
   isOT,
-  isComeback,
+  comebackBonus,
   sport,
   momentumBonus = 0,
   progress = 1.0,
@@ -24,7 +28,7 @@ export function calcExcitement(
   statsBonus = 0,
 ) {
   return calcExcitementBreakdown(
-    margin, isOT, isComeback, sport,
+    margin, isOT, comebackBonus, sport,
     momentumBonus, progress, upsetBonus, statsBonus,
   ).final;
 }
@@ -39,7 +43,7 @@ export function calcExcitement(
 export function calcExcitementBreakdown(
   margin,
   isOT,
-  isComeback,
+  comebackBonus,
   sport,
   momentumBonus = 0,
   progress = 1.0,
@@ -47,12 +51,14 @@ export function calcExcitementBreakdown(
   statsBonus = 0,
 ) {
   const cls = closenessScore(margin, sport, isOT);
-  const otBonus       = isOT       ? 5 : 0;
-  const comebackBonus = isComeback ? 10 : 0;
+  const otBonus = isOT ? 5 : 0;
+  // Comeback bonus is computed and capped upstream (analyzeComeback); clamp
+  // again defensively so the breakdown can never exceed its 15-pt ceiling.
+  const cb = Math.min(15, comebackBonus || 0);
   const raw =
     cls +
     otBonus +
-    comebackBonus +
+    cb +
     momentumBonus +
     upsetBonus +
     statsBonus;
@@ -62,7 +68,7 @@ export function calcExcitementBreakdown(
   return {
     closeness:  cls,
     ot:         otBonus,
-    comeback:   comebackBonus,
+    comeback:   cb,
     momentum:   momentumBonus,
     upset:      upsetBonus,
     stats:      statsBonus,
@@ -83,14 +89,6 @@ function closenessScore(margin, sport, isOT = false) {
   if (isOT || margin === 0) return maxClose;
   if (margin >= blowout) return 0;
   return Math.ceil(maxClose * (blowout - margin) / (blowout - 1));
-}
-
-// Comeback: did the margin shrink significantly from halftime to final?
-// Doesn't require the trailing team to win — narrowing counts too.
-export function detectComeback(halfHome, halfAway, finalMargin, sport) {
-  if (halfHome == null || halfAway == null) return false;
-  const halfMargin = Math.abs(halfHome - halfAway);
-  return (halfMargin - finalMargin) >= sport.margins.good;
 }
 
 export function excitementDesc(margin, isOT, isComeback, sport) {

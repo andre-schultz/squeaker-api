@@ -2,8 +2,8 @@
 // in a slow memory leak via undici pool retention; native fetch hits the
 // same undici layer but without the wrapper.
 import { SPORTS, HOURS_WINDOW, AUDIT_ENABLED, isSoccer, espnGamecastUrl } from '../config.js';
-import { calcExcitement, calcExcitementBreakdown, detectComeback, excitementDesc } from './algorithm.js';
-import { recordSnapshot, analyzeMomentum } from './timeline.js';
+import { calcExcitement, calcExcitementBreakdown, excitementDesc } from './algorithm.js';
+import { recordSnapshot, analyzeMomentum, analyzeComeback } from './timeline.js';
 import {
   fetchAndStoreWPTimeline,
   analyzeUpset,
@@ -162,19 +162,6 @@ async function parseEvent(ev, sportKey, cfg) {
   // Game progress (0.0–1.0) — used to weight live excitement scores
   const progress = estimateProgress(sportKey, detail, comps, period);
 
-  // Extract halftime scores for comeback detection
-  const homeLines = home.linescores || [];
-  const awayLines = away.linescores || [];
-  const half      = Math.ceil(homeLines.length / 2);
-  const halfHome  = homeLines.length >= 2
-    ? homeLines.slice(0, half).reduce((s, p) => s + (parseFloat(p.value) || 0), 0)
-    : null;
-  const halfAway  = awayLines.length >= 2
-    ? awayLines.slice(0, half).reduce((s, p) => s + (parseFloat(p.value) || 0), 0)
-    : null;
-
-  const isComeback = done ? detectComeback(halfHome, halfAway, margin, cfg) : false;
-
   // Build partial game object for snapshot recording
   const partialGame = {
     id: ev.id, sport: sportKey,
@@ -197,8 +184,29 @@ async function parseEvent(ev, sportKey, cfg) {
     getStatsBonus(ev.id),
   ]);
 
-  // Analyze momentum from full scoring timeline
-  const { momentumBonus, signals } = analyzeMomentum(timeline, { sport: sportKey }, { done, progress });
+  // Analyze momentum from full scoring timeline. Basketball scoring runs are
+  // pre-computed from play-by-play in the stats cycle (stored on the stats-bonus
+  // record); pass them through so they share momentum's cap.
+  const runs = statsBonusRecord?.runs;
+  const { momentumBonus, signals } = analyzeMomentum(timeline, { sport: sportKey }, {
+    done, progress,
+    runBonus:    runs?.runBonus ?? 0,
+    runSignals:  runs?.signals ?? [],
+  });
+
+  // Trajectory-aware comeback bonus from the same timeline (0–15, can fire more
+  // than once). Replaces the old halftime-vs-final boolean.
+  const { comebackBonus, signals: comebackSignals } = analyzeComeback(timeline, cfg, { done, progress, sportKey });
+
+  // ── Empty-net-adjusted closeness margin ──────────────────────────────────
+  // Empty-net goals (trailing team pulls the goalie) inflate the final margin
+  // but aren't a sign of a one-sided game. ESPN flags them; the stats cycle
+  // counts them per side onto the stats-bonus record. Strip them from the
+  // margin used for closeness ONLY — the displayed score and every other signal
+  // (momentum, comeback, stats) still use the real score.
+  const engHome = statsBonusRecord?.emptyNet?.home ?? 0;
+  const engAway = statsBonusRecord?.emptyNet?.away ?? 0;
+  const closenessMargin = Math.abs((homeScore - engHome) - (awayScore - engAway));
 
   // ── Win-probability signal ──────────────────────────────────────────
   let { upsetBonus, winnerPreGameWP } = analyzeUpset(wpTimeline, {
@@ -232,9 +240,9 @@ async function parseEvent(ev, sportKey, cfg) {
 
   // For live games, scale by progress so early-game close scores don't rank too high
   const excitement = calcExcitement(
-    margin,
+    closenessMargin,
     isOT,
-    isComeback,
+    comebackBonus,
     cfg,
     momentumBonus,
     live ? progress : 1.0,
@@ -253,7 +261,9 @@ async function parseEvent(ev, sportKey, cfg) {
     away:            mkTeam(away, awayScore, away.winner),
     margin,
     isOT,
-    isComeback,
+    comebackBonus,
+    comebackSignals,
+    isComeback:      comebackBonus > 0, // derived flag, kept for display/back-compat
     momentumBonus,
     momentumSignals: signals,
     upsetBonus,
@@ -264,7 +274,7 @@ async function parseEvent(ev, sportKey, cfg) {
     done,
     live,
     excitement,
-    desc:            excitementDesc(margin, isOT, isComeback, cfg),
+    desc:            excitementDesc(closenessMargin, isOT, comebackBonus > 0, cfg),
     date:            ev.date,
     odds,                     // frozen pre-game line for display
     currentLiveActionBuzz,    // 0-100, computed from full WP history; retains last value after game ends
@@ -276,7 +286,7 @@ async function parseEvent(ev, sportKey, cfg) {
   // No-op when AUDIT_ENABLED is false.
   if (AUDIT_ENABLED) {
     const breakdown = calcExcitementBreakdown(
-      margin, isOT, isComeback, cfg, momentumBonus,
+      closenessMargin, isOT, comebackBonus, cfg, momentumBonus,
       live ? progress : 1.0, upsetBonus, statsBonus,
     );
     // Raw ESPN status fields — verbatim inputs to estimateProgress(), plus the
@@ -294,6 +304,8 @@ async function parseEvent(ev, sportKey, cfg) {
     };
     await recordAudit(game, {
       momentum:   { bonus: momentumBonus, signals },
+      comeback:   { bonus: comebackBonus, signals: comebackSignals },
+      emptyNet:   { home: engHome, away: engAway, closenessMargin },
       upset:      { bonus: upsetBonus, winnerPreGameWP },
       liveAction: {
         current:   currentLiveActionBuzz,

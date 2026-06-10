@@ -34,7 +34,7 @@ function nhl(s, totalScore) {
   const { home, away } = s;
   const stats = {
     goals:       nr(totalScore, 0, 6),
-    shots:       nr(sum(home.shotsTotal, away.shotsTotal), 55, 70),
+    shots:       nr(sum(home.shotsTotal, away.shotsTotal), 45, 75),
     hits:        nr(sum(home.hits, away.hits), 45, 70),
     powerPlays:  nr(sum(home.powerPlayOpportunities, away.powerPlayOpportunities), 2, 9),
   };
@@ -143,6 +143,16 @@ const BY_SPORT = {
   cfb,
 };
 
+// Pure stats-activity bonus for a sport from a parsed stats snapshot. No Redis,
+// no network — exposed so offline tools (the historical rescore) compute the
+// exact production value. Returns { score, breakdown } or null for sports with
+// no stats formula.
+export function computeStatsBonus(sport, statsSnapshot, totalScore) {
+  const compute = BY_SPORT[sport];
+  if (!compute) return null;
+  return compute(statsSnapshot, totalScore);
+}
+
 // Compute activity bonus from a stats snapshot and store to Redis.
 // Overwrites on every stats cycle so live games get updated values as the game progresses.
 // Done games are stable — overwriting with the same data is harmless.
@@ -157,6 +167,13 @@ export async function recordStatsBonus(game, statsSnapshot) {
     sport:     game.sport,
     score:     result.score,
     breakdown: result.breakdown,
+    // Empty-net goal counts piggyback on this record so the scoring cycle, which
+    // already reads stats-bonus, can compute an ENG-adjusted closeness margin
+    // without a second Redis read or its own /summary fetch.
+    emptyNet:  statsSnapshot?.emptyNet ?? { home: 0, away: 0 },
+    // Basketball scoring-run momentum, likewise computed from play-by-play here
+    // and read back by the scoring cycle to fold into the momentum bonus.
+    runs:      statsSnapshot?.runs ?? null,
   };
 
   await setCache(`stats-bonus:${game.id}`, record, CACHE_TTL.statsBonus);

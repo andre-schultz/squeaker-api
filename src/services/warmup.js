@@ -149,6 +149,8 @@ async function saveHistory(game, { stats } = {}) {
     margin: game.margin,
     isOT: game.isOT,
     isComeback: game.isComeback,
+    comebackBonus: game.comebackBonus ?? 0,
+    comebackSignals: game.comebackSignals ?? [],
     excitementScore: game.excitement,
     excitementDesc: game.desc,
     momentumBonus: game.momentumBonus ?? 0,
