@@ -41,14 +41,55 @@ export function pruneFrozenGame(id) {
   frozenGames.delete(id);
 }
 
+// ── Out-of-season league suppression ──────────────────────────────────────────
+// A league that returns zero games — live, done, OR upcoming — across every
+// fetched date is almost certainly out of season. We mark it dormant for the
+// remainder of the current day (ET) and stop querying ESPN for it, then re-check
+// on the next day so it automatically comes back online when its season starts.
+//
+// Only a CONFIRMED-empty fetch marks dormancy: at least one date must have
+// responded OK. A league whose requests all errored is left active so a
+// transient ESPN outage can't suppress a whole league for the rest of the day.
+// The map is keyed by league and holds the ET date it's dormant FOR, so once the
+// day rolls over the stale entry no longer matches and the league is queried again.
+const _dormantForDate = new Map(); // leagueKey → ET date string ('YYYY-MM-DD')
+
+// ET calendar date, matching warmup.js's isOffHours() timezone basis. en-CA
+// formats as YYYY-MM-DD so string equality is a clean same-day check.
+function etDateString() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
+
 // Fetch all games and upcoming games in a single ESPN pass.
 // Returns { games, upcoming } where games is sorted by excitement desc
 // and upcoming is sorted by start time asc.
 export async function fetchAllEvents() {
   const dates = getAllDateStrings();
+  const today = etDateString();
+
+  // Skip leagues already confirmed empty earlier today; query everything else.
+  const active = Object.entries(SPORTS).filter(([key]) => _dormantForDate.get(key) !== today);
   const results = await Promise.all(
-    Object.entries(SPORTS).map(([key, cfg]) => fetchSport(key, cfg, dates))
+    active.map(([key, cfg]) => fetchSport(key, cfg, dates))
   );
+
+  // Update dormancy from this pass: confirmed-empty → dormant for today;
+  // any games found → clear (back in season). Errored-and-empty → leave as-is.
+  active.forEach(([key], i) => {
+    const r = results[i];
+    const total = r.games.length + r.upcoming.length;
+    if (total > 0) {
+      _dormantForDate.delete(key);
+    } else if (r.ok) {
+      _dormantForDate.set(key, today);
+    }
+  });
+
+  const dormant = Object.keys(SPORTS).filter(key => _dormantForDate.get(key) === today);
+  if (dormant.length) {
+    console.log(`[espn] ${active.length} leagues queried, ${dormant.length} dormant today: ${dormant.join(', ')}`);
+  }
+
   const seenGames    = new Set();
   const seenUpcoming = new Set();
   const games = results.flatMap(r => r.games).filter(g => {
@@ -74,9 +115,12 @@ export async function fetchAllGames() {
 }
 
 async function fetchSport(key, cfg, dates) {
-  // The 2-3 dates are independent scoreboard fetches — run them in parallel.
+  // The dates are independent scoreboard fetches — run them in parallel.
   const perDate = await Promise.all(dates.map(date => fetchSportDate(key, cfg, date)));
   return {
+    // ok = at least one date responded OK, so an all-empty result is a genuine
+    // "no games" rather than an outage. Drives out-of-season suppression.
+    ok:       perDate.some(r => r.ok),
     games:    perDate.flatMap(r => r.games),
     upcoming: perDate.flatMap(r => r.upcoming),
   };
@@ -86,6 +130,7 @@ async function fetchSport(key, cfg, dates) {
 async function fetchSportDate(key, cfg, date) {
   const games    = [];
   const upcoming = [];
+  let   ok       = false;
   try {
     // College leagues span multiple divisions; `conference.group` pins the
     // scoreboard to one (FBS / D-I) so lower-division games never leak in.
@@ -98,9 +143,10 @@ async function fetchSportDate(key, cfg, date) {
     if (!res.ok) {
       // Drain body so the underlying socket is released.
       try { await res.text(); } catch {}
-      return { games, upcoming };
+      return { ok, games, upcoming };
     }
     let data = await res.json();
+    ok = true; // parseable 200 — this date's emptiness (if any) is real, not an error
     const events = data.events || [];
     for (const ev of events) {
       const game = await parseEvent(ev, key, cfg);
@@ -113,7 +159,7 @@ async function fetchSportDate(key, cfg, date) {
   } catch (e) {
     console.error(`ESPN fetch error [${key}]:`, e.message);
   }
-  return { games, upcoming };
+  return { ok, games, upcoming };
 }
 
 async function parseEvent(ev, sportKey, cfg) {
@@ -380,16 +426,21 @@ function parseUpcomingEvent(ev, sportKey, cfg) {
   };
 }
 
-// Returns date strings for tomorrow, today, and yesterday.
-// Three dates covers: upcoming (tomorrow), live (today), and edge cases like
-// games that started last night and finished after midnight (yesterday's date).
+// Number of days ahead (beyond today) to fetch upcoming games for.
+// today + UPCOMING_DAYS_AHEAD = a 5-day upcoming window.
+const UPCOMING_DAYS_AHEAD = 4;
+
+// Returns date strings spanning yesterday through UPCOMING_DAYS_AHEAD days out.
+// The forward range (today … +4) feeds the 5-day upcoming list; today also
+// covers live games. Yesterday is kept for the edge case where a game starts
+// late and finishes after midnight, so it still carries yesterday's ESPN date.
 // Done games older than yesterday come from warmup.js's _doneGames Map —
 // we never re-fetch them from ESPN.
 function getAllDateStrings() {
   const dates = [];
-  for (let i = -1; i <= 1; i++) {
+  for (let i = UPCOMING_DAYS_AHEAD; i >= -1; i--) {
     const d = new Date();
-    d.setDate(d.getDate() - i);
+    d.setDate(d.getDate() + i);
     dates.push(d.toISOString().slice(0, 10).replace(/-/g, ''));
   }
   return dates;
