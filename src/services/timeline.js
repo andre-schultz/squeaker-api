@@ -77,7 +77,11 @@ const COMEBACK_DENOM = { mlb: 3, nfl: 10, cfb: 10 };
 // snapshot) so the whole-game closeness fraction can extend to the true end of
 // the game — the final margin holds from the last scoring play to the whistle.
 export function analyzeMomentum(timeline, sport, opts = {}) {
-  if (!timeline || timeline.length < 2) {
+  // Only a truly empty timeline yields nothing. A single snapshot (a game whose
+  // score never changed — e.g. a 0-0) still earns the close-time bonus below,
+  // computed from the kickoff baseline and the tail span; the per-event and
+  // lead-change loops simply don't run (they need ≥2 snapshots to compare).
+  if (!timeline || timeline.length < 1) {
     return { momentumBonus: 0, signals: [], breakdown: {} };
   }
 
@@ -124,6 +128,16 @@ export function analyzeMomentum(timeline, sport, opts = {}) {
   // of the full game it ramps up as the game stays close, and is comparable
   // across sports.
   let closeFrac = 0;
+
+  // Kickoff baseline: every game starts level (0-0 ⇒ tied ⇒ close). Credit the
+  // span from kickoff (progress 0) up to the first recorded snapshot so close-
+  // time is independent of when we first polled AND is credited even when the
+  // score never changes — a scoreless game produces only one snapshot, so the
+  // loop below never runs. Guarded on the first snapshot still being close so we
+  // never retroactively claim closeness for a game first observed already lopsided.
+  if (Math.abs(first.home - first.away) <= closeThresh) {
+    closeFrac += Math.max(0, progOf(first));
+  }
 
   for (let i = 1; i < timeline.length; i++) {
     const prev    = timeline[i - 1];

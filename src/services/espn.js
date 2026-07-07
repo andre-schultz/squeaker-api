@@ -205,6 +205,11 @@ async function parseEvent(ev, sportKey, cfg) {
                (isSoccer(sportKey) && period >= 3) ||
                (sportKey === 'mlb' && (/\/\d{2,}/.test(detail) || parseInning(detail) >= 10));
 
+  // Penalty shootout / hockey SO — soccer marks it as period 5 (3 = ET first
+  // half, 4 = ET second half, 5 = shootout); detail keywords catch the rest.
+  // A subset of isOT, so a shootout game earns both bonuses.
+  const isShootout = hasShootoutKeyword(detail) || (isSoccer(sportKey) && period >= 5);
+
   // Game progress (0.0–1.0) — used to weight live excitement scores
   const progress = estimateProgress(sportKey, detail, comps, period);
 
@@ -294,6 +299,7 @@ async function parseEvent(ev, sportKey, cfg) {
     live ? progress : 1.0,
     upsetBonus,
     statsBonus,
+    isShootout,
   );
 
   const mkTeam = (T, score, winner) => ({ ...baseTeam(T), score, winner: !!winner });
@@ -307,6 +313,7 @@ async function parseEvent(ev, sportKey, cfg) {
     away:            mkTeam(away, awayScore, away.winner),
     margin,
     isOT,
+    isShootout,
     comebackBonus,
     comebackSignals,
     isComeback:      comebackBonus > 0, // derived flag, kept for display/back-compat
@@ -333,7 +340,7 @@ async function parseEvent(ev, sportKey, cfg) {
   if (AUDIT_ENABLED) {
     const breakdown = calcExcitementBreakdown(
       closenessMargin, isOT, comebackBonus, cfg, momentumBonus,
-      live ? progress : 1.0, upsetBonus, statsBonus,
+      live ? progress : 1.0, upsetBonus, statsBonus, isShootout,
     );
     // Raw ESPN status fields — verbatim inputs to estimateProgress(), plus the
     // derived progress/isOT it produced, so we can replay and tune it offline.
@@ -540,6 +547,14 @@ function baseTeam(T) {
 const OT_KEYWORD_RE = /\bot\b|\b\d+ot\b|overtime|extra time|penalties|pens|ft-et|aet|shootout/;
 function hasOTKeyword(detail) {
   return OT_KEYWORD_RE.test(detail);
+}
+
+// Shootout detector — a penalty shootout (soccer) or hockey SO is a subset of OT
+// that earns an extra bonus stacked on top of it. Kept separate from
+// OT_KEYWORD_RE so the two bonuses can be reasoned about independently.
+const SHOOTOUT_RE = /penalt|pens|shootout/;
+function hasShootoutKeyword(detail) {
+  return SHOOTOUT_RE.test(detail);
 }
 
 function parseMinutes(detail) {

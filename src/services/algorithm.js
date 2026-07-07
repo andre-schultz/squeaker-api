@@ -8,12 +8,15 @@
 // Comeback:         0-15 pts  (scaled by deficit erased × progress; can fire
 //                             multiple times, summed and capped — see analyzeComeback)
 // OT:                 +5 pts
+// Shootout:           +5 pts  (penalty shootout / hockey SO — stacked on top of
+//                             the OT bonus; a shootout ending is more dramatic
+//                             than an ordinary OT/ET winner)
 // Momentum bonus:    +25 pts  (late goals, lead changes, time spent close)
 // Upset bonus:       +10 pts  (underdog won outright)
 // Stats activity:   +20 pts  (computed from game stats snapshot; extra-high
 //                             stats above the p90 ceiling can push past 15)
 //
-// Theoretical raw max if all bonuses fire: 140. Clamped to 100 at the end.
+// Theoretical raw max if all bonuses fire: 145. Clamped to 100 at the end.
 // Bonuses are independent — each contributes its full value if earned.
 // WP-drama is tracked separately as part of the Action score, not here.
 
@@ -26,10 +29,11 @@ export function calcExcitement(
   progress = 1.0,
   upsetBonus = 0,
   statsBonus = 0,
+  isShootout = false,
 ) {
   return calcExcitementBreakdown(
     margin, isOT, comebackBonus, sport,
-    momentumBonus, progress, upsetBonus, statsBonus,
+    momentumBonus, progress, upsetBonus, statsBonus, isShootout,
   ).final;
 }
 
@@ -49,15 +53,21 @@ export function calcExcitementBreakdown(
   progress = 1.0,
   upsetBonus = 0,
   statsBonus = 0,
+  isShootout = false,
 ) {
   const cls = closenessScore(margin, sport, isOT);
   const otBonus = isOT ? 5 : 0;
+  // A shootout (soccer penalties / hockey SO) is a distinct, higher-drama ending
+  // than an ordinary OT/ET win, so it earns an extra +5 stacked on top of the OT
+  // bonus. isShootout implies isOT upstream, so a shootout game earns both.
+  const shootoutBonus = isShootout ? 5 : 0;
   // Comeback bonus is computed and capped upstream (analyzeComeback); clamp
   // again defensively so the breakdown can never exceed its 15-pt ceiling.
   const cb = Math.min(15, comebackBonus || 0);
   const raw =
     cls +
     otBonus +
+    shootoutBonus +
     cb +
     momentumBonus +
     upsetBonus +
@@ -68,6 +78,7 @@ export function calcExcitementBreakdown(
   return {
     closeness:  cls,
     ot:         otBonus,
+    shootout:   shootoutBonus,
     comeback:   cb,
     momentum:   momentumBonus,
     upset:      upsetBonus,
