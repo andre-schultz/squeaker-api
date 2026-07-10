@@ -2,9 +2,9 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { Ratelimit } from '@upstash/ratelimit';
-import { Redis } from '@upstash/redis';
 import gamesRouter from './src/routes/games.js';
 import metaRouter from './src/routes/meta.js';
+import { redis } from './src/services/cache.js';
 import { startWarmupSchedule } from './src/services/warmup.js';
 
 const app  = express();
@@ -19,10 +19,7 @@ app.use(express.json());
 // refreshes while still shutting down scrapers.
 const ratelimit = process.env.UPSTASH_REDIS_REST_URL
   ? new Ratelimit({
-      redis: new Redis({
-        url:   process.env.UPSTASH_REDIS_REST_URL,
-        token: process.env.UPSTASH_REDIS_REST_TOKEN,
-      }),
+      redis,
       limiter: Ratelimit.slidingWindow(120, '1 m'),
       prefix: 'rl',
     })

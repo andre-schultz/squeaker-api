@@ -7,7 +7,7 @@ const STATS_TTL = CACHE_TTL.stats;
 
 // Fetch team + goalie stats from ESPN's summary endpoint.
 // Returns { home, away } with team stats and a goalies array, or null on failure.
-export async function fetchGameStats(gameId, espnSport, espnLeague) {
+async function fetchGameStats(gameId, espnSport, espnLeague) {
   try {
     const url = `${SUMMARY_BASE}/${espnSport}/${espnLeague}/summary?event=${gameId}`;
     const res = await fetch(url, { headers: { 'User-Agent': 'Squeaker/1.0' } });
@@ -147,10 +147,12 @@ export async function recordStatsSnapshot(game, espnSport, espnLeague) {
         Object.keys(awayDiff).length === 0 &&
         lastEntry.live === game.live &&
         lastEntry.done === game.done) {
-      entry = { t: snapshot.t }; // no changes — timestamp only
-    } else {
-      entry = { t: snapshot.t, live: game.live, done: game.done, home: homeDiff, away: awayDiff };
+      // Nothing changed — skip the append entirely. Rewriting the full array
+      // just to add a timestamp-only entry was a wasted Redis write per game
+      // per cycle (and the bulk of writes for recently-finished games).
+      return snapshot;
     }
+    entry = { t: snapshot.t, live: game.live, done: game.done, home: homeDiff, away: awayDiff };
   }
 
   await setCache(timelineKey, [...existing, entry], STATS_TTL);

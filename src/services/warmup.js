@@ -13,6 +13,9 @@ import { fetchAllEvents, preFreezeGames, pruneFrozenGame } from './espn.js';
 import { recordStatsSnapshot } from './stats.js';
 import { recordApproxStats } from './approxStats.js';
 import { recordStatsBonus } from './statsBonus.js';
+import { pruneOdds } from './odds.js';
+import { pruneWPTracking } from './probabilities.js';
+import { pruneAuditTracking } from './audit.js';
 import { setCache, getCache, drainCacheCounters } from './cache.js';
 import {
   CACHE_TTL,
@@ -97,8 +100,10 @@ async function runGameCycle() {
     }
 
     // ── Prune done games older than the display window (5 days) ──────────
-    // Both _doneGames (warmup.js) and frozenGames (espn.js) are kept in sync
-    // so neither Map accumulates stale entries across long-running processes.
+    // Every per-game in-process store is pruned together — _doneGames here,
+    // plus espn.js frozenGames, odds.js _memOdds, probabilities.js
+    // doneSnapshotted, and audit.js doneAudited — so none of them accumulate
+    // stale entries across long-running processes.
     const cutoff = Date.now() - HOURS_WINDOW * 60 * 60 * 1000;
     for (const [id, g] of _doneGames) {
       // Fall back to doneAt when game.date is missing/malformed so a bad date
@@ -108,6 +113,9 @@ async function runGameCycle() {
       if (!Number.isFinite(ts) || ts < cutoff) {
         _doneGames.delete(id);
         pruneFrozenGame(id);
+        pruneOdds(id);
+        pruneWPTracking(id);
+        pruneAuditTracking(id);
       }
     }
 
@@ -136,6 +144,10 @@ async function saveHistory(game, { stats } = {}) {
   const date = new Date(game.date).toISOString().slice(0, 10);
   const key = `history:${date}:${game.id}`;
   const existing = await getCache(key);
+
+  // Already saved with final stats — the row can't get any more complete, so
+  // skip the rewrite (this runs every stats cycle for an hour after each game).
+  if (existing?.finalStats) return;
 
   const base = existing || {
     id: game.id,
@@ -264,7 +276,7 @@ function tick() {
   }
 }
 
-export async function warmCache() {
+async function warmCache() {
   console.log(
     `[warmup] initial warm… ` +
     `AUDIT_ENABLED=${AUDIT_ENABLED} (raw=${JSON.stringify(process.env.AUDIT_ENABLED)})`

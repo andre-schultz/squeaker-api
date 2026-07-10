@@ -11,7 +11,7 @@
 // silently no-op.
 
 import { setCache, getCache } from './cache.js';
-import { CACHE_TTL, WP_WINDOW_MS } from '../config.js';
+import { CACHE_TTL, SPORTS, WP_SPORTS } from '../config.js';
 
 const CORE    = 'https://sports.core.api.espn.com/v2/sports';
 const HEADERS = { 'User-Agent': 'Squeaker/1.0' };
@@ -23,6 +23,12 @@ const PAGE_SIZE = 300; // entries per ESPN probabilities page; most games fit in
 // dedup filter prevents duplicate writes on the first re-fetch.
 const doneSnapshotted = new Set();
 
+// Called by warmup.js when a game ages out of the display window, so this set
+// doesn't grow unboundedly over a long-running process.
+export function pruneWPTracking(id) {
+  doneSnapshotted.delete(id);
+}
+
 // ── Public ────────────────────────────────────────────────────────────────────
 
 // Fetch ESPN's full play-by-play WP history for a game and store it.
@@ -30,7 +36,7 @@ const doneSnapshotted = new Set();
 // clean (ESPN includes many no-change filler entries).
 // Returns the filtered timeline, or the cached one if nothing changed.
 export async function fetchAndStoreWPTimeline(game, espnSport, espnLeague) {
-  if (!WP_WINDOW_MS[game.sport]) return null;
+  if (!WP_SPORTS.has(game.sport)) return null;
   if (!game.live && !game.done) return null;
   if (game.done && doneSnapshotted.has(game.id)) return getWPTimeline(game.id);
 
@@ -54,7 +60,7 @@ export async function fetchAndStoreWPTimeline(game, espnSport, espnLeague) {
   return filtered;
 }
 
-export async function getWPTimeline(gameId) {
+async function getWPTimeline(gameId) {
   return (await getCache(`probabilities:${gameId}`)) || [];
 }
 
@@ -74,28 +80,16 @@ export async function getWPTimeline(gameId) {
 //                  SWING_THRESHOLD. Detects volatile back-and-forth with
 //                  brief pauses between big plays.
 //
-// Sport-specific multipliers. Each sport has different per-play WP dynamics
-// (a baseball at-bat moves the needle more than a basketball possession), so
-// a single set of multipliers produces skewed cross-sport distributions.
-// All sports share the same SWING_THRESHOLD and formula shape; only the
-// weights differ so scores are calibrated within each sport's natural range.
-// CBB and WCBB intentionally skew low — most games are mismatches — but
-// competitive games still reach the high end.
-export const SWING_THRESHOLD = 0.03;
-
-export const ACTION_MULTIPLIERS = {
-  mlb:  { avgSwing: 800,  consecRate: 60,  semiRate: 40 },
-  nba:  { avgSwing: 1200, consecRate: 90,  semiRate: 60 },
-  wnba: { avgSwing: 1200, consecRate: 90,  semiRate: 60 },
-  nfl:  { avgSwing: 1400, consecRate: 110, semiRate: 70 },
-  cfb:  { avgSwing: 1300, consecRate: 100, semiRate: 65 },
-  nhl:  { avgSwing: 1100, consecRate: 85,  semiRate: 55 },
-  cbb:  { avgSwing: 1600, consecRate: 120, semiRate: 80 },
-  wcbb: { avgSwing: 1600, consecRate: 120, semiRate: 80 },
-};
+// Sport-specific multipliers live in the SPORTS config (`action` field). Each
+// sport has different per-play WP dynamics (a baseball at-bat moves the needle
+// more than a basketball possession), so a single set of multipliers produces
+// skewed cross-sport distributions. All sports share the same SWING_THRESHOLD
+// and formula shape; only the weights differ so scores are calibrated within
+// each sport's natural range.
+const SWING_THRESHOLD = 0.03;
 
 export function computeActionScore(timeline, sport) {
-  const m = ACTION_MULTIPLIERS[sport] ?? ACTION_MULTIPLIERS.mlb;
+  const m = SPORTS[sport]?.action ?? SPORTS.mlb.action;
   const result = {
     score: 0,
     avgSwing: 0,

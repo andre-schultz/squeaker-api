@@ -56,72 +56,46 @@ function mlb(s, totalScore) {
   return weighted(stats, weights);
 }
 
-function nba(s, totalScore) {
-  const { home, away } = s;
-  const stats = {
-    points:        nr(totalScore, 211, 250),
-    threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 20, 31),
-    stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 20, 31),
+// Basketball and football share one formula per family; only the [floor,
+// ceiling] normalization bounds differ per league. Recalibrating a league is a
+// bounds-table edit, not a code change.
+const BASKETBALL_BOUNDS = {
+  nba:  { points: [211, 250], threePointers: [20, 31], stealsBlocks: [20, 31] },
+  wnba: { points: [140, 180], threePointers: [10, 21], stealsBlocks: [17, 26] },
+  cbb:  { points: [131, 169], threePointers: [12, 20], stealsBlocks: [14, 25] },
+  wcbb: { points: [116, 154], threePointers: [8, 17],  stealsBlocks: [17, 30] },
+};
+const BASKETBALL_WEIGHTS = { points: 0.20, threePointers: 0.45, stealsBlocks: 0.35 };
+
+function basketball(bounds) {
+  return (s, totalScore) => {
+    const { home, away } = s;
+    const stats = {
+      points:        nr(totalScore, ...bounds.points),
+      threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), ...bounds.threePointers),
+      stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), ...bounds.stealsBlocks),
+    };
+    return weighted(stats, BASKETBALL_WEIGHTS);
   };
-  const weights = { points: 0.20, threePointers: 0.45, stealsBlocks: 0.35 };
-  return weighted(stats, weights);
 }
 
-function wnba(s, totalScore) {
-  const { home, away } = s;
-  const stats = {
-    points:        nr(totalScore, 140, 180),
-    threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 10, 21),
-    stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 17, 26),
-  };
-  const weights = { points: 0.20, threePointers: 0.45, stealsBlocks: 0.35 };
-  return weighted(stats, weights);
-}
+const FOOTBALL_BOUNDS = {
+  nfl: { points: [25, 57], turnovers: [0, 3], firstDowns: [28, 46], yards: [480, 770] },
+  cfb: { points: [28, 67], turnovers: [0, 3], firstDowns: [29, 46], yards: [550, 875] },
+};
+const FOOTBALL_WEIGHTS = { points: 0.25, turnovers: 0.35, firstDowns: 0.20, yards: 0.20 };
 
-function cbb(s, totalScore) {
-  const { home, away } = s;
-  const stats = {
-    points:        nr(totalScore, 131, 169),
-    threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 12, 20),
-    stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 14, 25),
+function football(bounds) {
+  return (s, totalScore) => {
+    const { home, away } = s;
+    const stats = {
+      points:     nr(totalScore, ...bounds.points),
+      turnovers:  nr(sum(home.interceptions, away.interceptions) + sum(home.fumbles, away.fumbles), ...bounds.turnovers),
+      firstDowns: nr(sum(home.firstDowns, away.firstDowns), ...bounds.firstDowns),
+      yards:      nr(sum(home.totalYards, away.totalYards), ...bounds.yards),
+    };
+    return weighted(stats, FOOTBALL_WEIGHTS);
   };
-  const weights = { points: 0.20, threePointers: 0.45, stealsBlocks: 0.35 };
-  return weighted(stats, weights);
-}
-
-function wcbb(s, totalScore) {
-  const { home, away } = s;
-  const stats = {
-    points:        nr(totalScore, 116, 154),
-    threePointers: nr(sum(home[THREE_KEY], away[THREE_KEY]), 8, 17),
-    stealsBlocks:  nr(sum(home.steals, away.steals) + sum(home.blocks, away.blocks), 17, 30),
-  };
-  const weights = { points: 0.20, threePointers: 0.45, stealsBlocks: 0.35 };
-  return weighted(stats, weights);
-}
-
-function nfl(s, totalScore) {
-  const { home, away } = s;
-  const stats = {
-    points:     nr(totalScore, 25, 57),
-    turnovers:  nr(sum(home.interceptions, away.interceptions) + sum(home.fumbles, away.fumbles), 0, 3),
-    firstDowns: nr(sum(home.firstDowns, away.firstDowns), 28, 46),
-    yards:      nr(sum(home.totalYards, away.totalYards), 480, 770),
-  };
-  const weights = { points: 0.25, turnovers: 0.35, firstDowns: 0.20, yards: 0.20 };
-  return weighted(stats, weights);
-}
-
-function cfb(s, totalScore) {
-  const { home, away } = s;
-  const stats = {
-    points:     nr(totalScore, 28, 67),
-    turnovers:  nr(sum(home.interceptions, away.interceptions) + sum(home.fumbles, away.fumbles), 0, 3),
-    firstDowns: nr(sum(home.firstDowns, away.firstDowns), 29, 46),
-    yards:      nr(sum(home.totalYards, away.totalYards), 550, 875),
-  };
-  const weights = { points: 0.25, turnovers: 0.35, firstDowns: 0.20, yards: 0.20 };
-  return weighted(stats, weights);
 }
 
 function weighted(stats, weights) {
@@ -135,12 +109,12 @@ const BY_SPORT = {
   epl: soccer, mls: soccer, ucl: soccer, nwsl: soccer, intl: soccer, wc: soccer,
   nhl,
   mlb,
-  nba,
-  wnba,
-  cbb,
-  wcbb,
-  nfl,
-  cfb,
+  nba:  basketball(BASKETBALL_BOUNDS.nba),
+  wnba: basketball(BASKETBALL_BOUNDS.wnba),
+  cbb:  basketball(BASKETBALL_BOUNDS.cbb),
+  wcbb: basketball(BASKETBALL_BOUNDS.wcbb),
+  nfl:  football(FOOTBALL_BOUNDS.nfl),
+  cfb:  football(FOOTBALL_BOUNDS.cfb),
 };
 
 // Pure stats-activity bonus for a sport from a parsed stats snapshot. No Redis,

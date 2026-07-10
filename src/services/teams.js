@@ -108,11 +108,14 @@ async function getTeamsIndex() {
   const cached = await getCache('teams:index');
   if (cached) return cached;
 
-  const all = [];
-  for (const key of Object.keys(SPORTS)) {
-    const teams = await getTeamsForLeague(key); // each is itself cached
-    for (const t of teams || []) all.push({ ...t, sport: key });
-  }
+  // Leagues are independent (and each cached on its own) — build in parallel.
+  const perLeague = await Promise.all(
+    Object.keys(SPORTS).map(async key => {
+      const teams = await getTeamsForLeague(key);
+      return (teams || []).map(t => ({ ...t, sport: key }));
+    })
+  );
+  const all = perLeague.flat();
   if (all.length) await setCache('teams:index', all, TEAMS_TTL);
   return all;
 }

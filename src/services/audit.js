@@ -19,6 +19,12 @@ let auditWriteCount = 0;
 // memory short-circuits the read entirely. Resets on container restart.
 const doneAudited = new Set();
 
+// Called by warmup.js when a game ages out of the display window, so this set
+// doesn't grow unboundedly over a long-running process.
+export function pruneAuditTracking(id) {
+  doneAudited.delete(id);
+}
+
 // Append a snapshot for this game. No-op when AUDIT_ENABLED is false.
 // Skips the write if the new snapshot is identical to the previous one
 // (common for finished games whose state doesn't change between cycles).

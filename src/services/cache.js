@@ -1,7 +1,9 @@
 import { Redis } from '@upstash/redis';
 
-// Upstash Redis client — credentials from environment variables
-const redis = new Redis({
+// Upstash Redis client — credentials from environment variables. Exported so
+// other consumers (the rate limiter in server.js) share one client instead of
+// each constructing their own.
+export const redis = new Redis({
   url:   process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });

@@ -2,7 +2,7 @@
 // in a slow memory leak via undici pool retention; native fetch hits the
 // same undici layer but without the wrapper.
 import { SPORTS, HOURS_WINDOW, AUDIT_ENABLED, isSoccer, espnGamecastUrl } from '../config.js';
-import { calcExcitement, calcExcitementBreakdown, excitementDesc } from './algorithm.js';
+import { calcExcitementBreakdown, excitementDesc } from './algorithm.js';
 import { recordSnapshot, analyzeMomentum, analyzeComeback } from './timeline.js';
 import {
   fetchAndStoreWPTimeline,
@@ -145,7 +145,7 @@ async function fetchSportDate(key, cfg, date) {
       try { await res.text(); } catch {}
       return { ok, games, upcoming };
     }
-    let data = await res.json();
+    const data = await res.json();
     ok = true; // parseable 200 — this date's emptiness (if any) is real, not an error
     const events = data.events || [];
     for (const ev of events) {
@@ -154,8 +154,6 @@ async function fetchSportDate(key, cfg, date) {
       const upcomingGame = parseUpcomingEvent(ev, key, cfg);
       if (upcomingGame) upcoming.push(upcomingGame);
     }
-    // Release the parsed payload before returning.
-    data = null;
   } catch (e) {
     console.error(`ESPN fetch error [${key}]:`, e.message);
   }
@@ -289,18 +287,20 @@ async function parseEvent(ev, sportKey, cfg) {
 
   const statsBonus = statsBonusRecord?.score ?? 0;
 
-  // For live games, scale by progress so early-game close scores don't rank too high
-  const excitement = calcExcitement(
-    closenessMargin,
+  // For live games, scale by progress so early-game close scores don't rank too
+  // high. The breakdown is computed once and reused by the audit snapshot below.
+  const excitementBreakdown = calcExcitementBreakdown({
+    margin:   closenessMargin,
+    sport:    cfg,
     isOT,
+    isShootout,
     comebackBonus,
-    cfg,
     momentumBonus,
-    live ? progress : 1.0,
     upsetBonus,
     statsBonus,
-    isShootout,
-  );
+    progress: live ? progress : 1.0,
+  });
+  const excitement = excitementBreakdown.final;
 
   const mkTeam = (T, score, winner) => ({ ...baseTeam(T), score, winner: !!winner });
 
@@ -338,10 +338,6 @@ async function parseEvent(ev, sportKey, cfg) {
   // score so a stored game can be replayed and explained later.
   // No-op when AUDIT_ENABLED is false.
   if (AUDIT_ENABLED) {
-    const breakdown = calcExcitementBreakdown(
-      closenessMargin, isOT, comebackBonus, cfg, momentumBonus,
-      live ? progress : 1.0, upsetBonus, statsBonus, isShootout,
-    );
     // Raw ESPN status fields — verbatim inputs to estimateProgress(), plus the
     // derived progress/isOT it produced, so we can replay and tune it offline.
     const statusSnapshot = {
@@ -367,7 +363,7 @@ async function parseEvent(ev, sportKey, cfg) {
       statsActivity: statsBonusRecord
         ? { score: statsBonusRecord.score, breakdown: statsBonusRecord.breakdown }
         : null,
-      excitement: breakdown,
+      excitement: excitementBreakdown,
     }, statusSnapshot);
   }
 
@@ -443,14 +439,39 @@ const UPCOMING_DAYS_AHEAD = 4;
 // late and finishes after midnight, so it still carries yesterday's ESPN date.
 // Done games older than yesterday come from warmup.js's _doneGames Map —
 // we never re-fetch them from ESPN.
+//
+// Anchored on the ET calendar date (ESPN's scoreboard dates are ET-based, as
+// is everything else here). Anchoring on UTC shifted the whole window forward
+// every ET evening, silently dropping the "yesterday" coverage.
 function getAllDateStrings() {
+  const [y, m, d] = etDateString().split('-').map(Number);
   const dates = [];
   for (let i = UPCOMING_DAYS_AHEAD; i >= -1; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() + i);
-    dates.push(d.toISOString().slice(0, 10).replace(/-/g, ''));
+    const dt = new Date(Date.UTC(y, m - 1, d + i));
+    dates.push(dt.toISOString().slice(0, 10).replace(/-/g, ''));
   }
   return dates;
+}
+
+// Regulation format for the period-clock sports: progress = minutes elapsed /
+// total regulation minutes, derived from "MM:SS - Nth" detail strings. CBB
+// (halves), MLB (innings), and soccer (match minute) have their own paths in
+// estimateProgress below.
+const PERIOD_FORMAT = {
+  nfl:  { periods: 4, minutes: 15 },
+  cfb:  { periods: 4, minutes: 15 },
+  nba:  { periods: 4, minutes: 12 },
+  wnba: { periods: 4, minutes: 10 },
+  wcbb: { periods: 4, minutes: 10 },
+  nhl:  { periods: 3, minutes: 20 },
+};
+
+const PERIOD_WORDS = ['1st', '2nd', '3rd', '4th'];
+function periodFromDetail(detail, maxPeriods) {
+  for (let p = 1; p <= maxPeriods; p++) {
+    if (detail.includes(PERIOD_WORDS[p - 1])) return p;
+  }
+  return null;
 }
 
 // Estimates game progress 0.0–1.0 from status detail string
@@ -472,33 +493,24 @@ function estimateProgress(sportKey, detail, comps, period) {
                            detail.includes('half time') ||
                            detail.includes('ht');
 
-    if (['nfl', 'cfb'].includes(sportKey)) {
-      const qtr  = detail.includes('1st') ? 1 : detail.includes('2nd') ? 2
-                 : detail.includes('3rd') ? 3 : detail.includes('4th') ? 4 : null;
-      const mins = parseMinutes(detail);
-      if (qtr && mins !== null && !isIntermission) {
-        return Math.min(1.0, ((qtr - 1) * 15 + (15 - mins)) / 60);
+    const fmt = PERIOD_FORMAT[sportKey];
+    if (fmt) {
+      const per   = periodFromDetail(detail, fmt.periods);
+      const mins  = parseMinutes(detail);
+      const total = fmt.periods * fmt.minutes;
+      if (per && mins !== null && !isIntermission) {
+        return Math.min(1.0, ((per - 1) * fmt.minutes + (fmt.minutes - mins)) / total);
       }
-      if (qtr && isIntermission) return Math.min(1.0, (qtr * 15) / 60);
+      if (per && isIntermission) return Math.min(1.0, (per * fmt.minutes) / total);
+      // NHL: "3rd" with no clock, or an intermission with no parsable period,
+      // means regulation is effectively over (end of 3rd / before OT).
+      if (sportKey === 'nhl' && (detail.includes('3rd') || (!per && isIntermission))) return 1.0;
     }
 
-    if (['nba', 'wnba', 'cbb', 'wcbb'].includes(sportKey)) {
-      const qtr  = detail.includes('1st') ? 1 : detail.includes('2nd') ? 2
-                 : detail.includes('3rd') ? 3 : detail.includes('4th') ? 4 : null;
+    if (sportKey === 'cbb') {
       const mins = parseMinutes(detail);
-      if (sportKey === 'nba') {
-        if (qtr && mins !== null && !isIntermission) return Math.min(1.0, ((qtr - 1) * 12 + (12 - mins)) / 48);
-        if (qtr && isIntermission) return Math.min(1.0, (qtr * 12) / 48);
-      }
-      if (sportKey === 'wnba' || sportKey === 'wcbb') {
-        // 4 quarters × 10 min = 40 min total
-        if (qtr && mins !== null && !isIntermission) return Math.min(1.0, ((qtr - 1) * 10 + (10 - mins)) / 40);
-        if (qtr && isIntermission) return Math.min(1.0, (qtr * 10) / 40);
-      }
-      if (sportKey === 'cbb') {
-        if (detail.includes('1st half')) return isIntermission ? 0.5 : mins != null ? (20 - mins) / 40 : 0.25;
-        if (detail.includes('2nd half')) return isIntermission ? 1.0 : mins != null ? (40 - mins) / 40 : 0.75;
-      }
+      if (detail.includes('1st half')) return isIntermission ? 0.5 : mins != null ? (20 - mins) / 40 : 0.25;
+      if (detail.includes('2nd half')) return isIntermission ? 1.0 : mins != null ? (40 - mins) / 40 : 0.75;
     }
 
     if (sportKey === 'mlb') {
@@ -507,19 +519,6 @@ function estimateProgress(sportKey, detail, comps, period) {
         const half = detail.includes('bot') ? 0.5 : 0;
         return Math.min(1.0, (inning - 1 + half) / 9);
       }
-    }
-
-    if (sportKey === 'nhl') {
-      const per  = detail.includes('1st') ? 1 : detail.includes('2nd') ? 2
-                 : detail.includes('3rd') ? 3 : null;
-      const mins = parseMinutes(detail);
-      if (per && mins !== null && !isIntermission) {
-        return Math.min(1.0, ((per - 1) * 20 + (20 - mins)) / 60);
-      }
-      // End of any period — count it as complete
-      if (per && isIntermission) return Math.min(1.0, (per * 20) / 60);
-      // End of 3rd / between 3rd and OT = full regulation
-      if (detail.includes('3rd') || (!per && isIntermission)) return 1.0;
     }
 
     if (isSoccer(sportKey)) {

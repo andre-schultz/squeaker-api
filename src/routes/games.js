@@ -1,9 +1,9 @@
 import express from 'express';
 import { fetchAllGames } from '../services/espn.js';
-import { getCache, setCache } from '../services/cache.js';
+import { getCache } from '../services/cache.js';
 import { getStats, getStatsTimeline } from '../services/stats.js';
 import { getApproxStats } from '../services/approxStats.js';
-import { CACHE_TTL, espnGamecastUrl } from '../config.js';
+import { espnGamecastUrl } from '../config.js';
 
 const router = express.Router();
 
@@ -17,6 +17,10 @@ function withLinks(games) {
   );
 }
 
+// In-flight fallback fetch, shared across concurrent cache-miss requests so a
+// burst of traffic during an outage triggers at most one ESPN fan-out at a time.
+let fallbackInflight = null;
+
 // GET /api/games
 // Always served from cache. Falls back to live fetch if cache is empty.
 router.get('/', async (req, res) => {
@@ -24,12 +28,16 @@ router.get('/', async (req, res) => {
     const cached = await getCache('games:all');
     if (cached && cached.length > 0) return res.json(withLinks(cached));
 
-    // Cache miss — fetch live and cache immediately
+    // Cache miss — cold boot before the first warmup cycle, or the cycle has
+    // been failing for longer than the TTL. Fetch live so the request is still
+    // served, but do NOT write games:all: this list lacks done games older
+    // than the ESPN date window (the warmup cycle composes those from its
+    // in-memory store) and would clobber the authoritative list.
     console.log('[routes] Cache miss — fetching games live');
-    const games   = await fetchAllGames();
-    const hasLive = games.some(g => g.live);
-    const ttl     = hasLive ? CACHE_TTL.liveGames : CACHE_TTL.finishedGames;
-    if (games.length > 0) await setCache('games:all', games, ttl);
+    if (!fallbackInflight) {
+      fallbackInflight = fetchAllGames().finally(() => { fallbackInflight = null; });
+    }
+    const games = await fallbackInflight;
     res.json(withLinks(games));
   } catch (e) {
     console.error('GET /api/games error:', e.message);

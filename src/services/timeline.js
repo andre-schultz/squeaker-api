@@ -1,5 +1,5 @@
 import { getCache, setCache } from './cache.js';
-import { CACHE_TTL, isSoccer } from '../config.js';
+import { CACHE_TTL, SPORTS, isSoccer } from '../config.js';
 
 const TIMELINE_TTL = CACHE_TTL.timeline;
 
@@ -29,9 +29,17 @@ export async function recordSnapshot(game) {
   return updated;
 }
 
-// Load the full timeline for a game
-export async function getTimeline(gameId) {
-  return await getCache(`timeline:${gameId}`) || [];
+// Progress (0–1) accessor for a timeline's snapshots, falling back to a
+// snapshot's elapsed-time fraction for old entries written before `progress`
+// was added to the schema.
+function makeProgOf(timeline) {
+  const first    = timeline[0];
+  const last     = timeline[timeline.length - 1];
+  const duration = last.t - first.t;
+  return (s) =>
+    s.progress != null
+      ? s.progress
+      : (duration > 0 ? (s.t - first.t) / duration : 0);
 }
 
 // Linear "lateness" weight for a scoring event, based on how far into the game
@@ -63,14 +71,9 @@ const BB_RUN_BASE_SCALE  = 0.5; // run bases are half the non-basketball event b
                                 // from the historical basketball rescore — at full base
                                 // + threshold 7 the bonus saturated momentum's 25-pt cap
                                 // in ~40% of NBA games; this keeps it discriminating.
-const BB_CLOSE           = 5;  // basketball "close" margin (matches closenessThreshold)
-
-// Per-sport denominator for the comeback bonus — the deficit erased is measured
-// relative to this. Defaults to the sport's `margins.good`; overridden here when
-// a sport's comeback feel differs from `good` (a 3-run MLB hole and a 10-point
-// NFL hole are the unit of a "real" comeback in those sports). Kept separate
-// from `margins.good` so tuning comebacks doesn't shift the closeness wording.
-const COMEBACK_DENOM = { mlb: 3, nfl: 10, cfb: 10 };
+// Basketball "close" margin. All basketball leagues share one closeMargin in
+// the SPORTS config; classifyRun has no sport key so it reads the NBA entry.
+const BB_CLOSE = SPORTS.nba.closeMargin;
 
 // Analyze timeline to produce momentum scoring signals.
 // `opts.done` / `opts.progress` describe the game as a whole (not the last
@@ -97,9 +100,9 @@ export function analyzeMomentum(timeline, sport, opts = {}) {
   const isBasketball = BASKETBALL.has(sportKey);
   const closeThresh  = closenessThreshold(sport);
 
-  const first    = timeline[0];
-  const last     = timeline[timeline.length - 1];
-  const duration = last.t - first.t; // wall-clock span; only a progress fallback now
+  const first  = timeline[0];
+  const last   = timeline[timeline.length - 1];
+  const progOf = makeProgOf(timeline);
 
   let leadChanges = 0;
   let prevLeader  = getLeader(first.home, first.away);
@@ -113,13 +116,6 @@ export function analyzeMomentum(timeline, sport, opts = {}) {
     if (d0 <= -BB_SURGE_THRESHOLD) homeArmed = true;
     if (d0 >=  BB_SURGE_THRESHOLD) awayArmed = true;
   }
-
-  // Progress (0–1) for a snapshot, falling back to its elapsed-time fraction for
-  // old snapshots written before `progress` was added to the schema.
-  const progOf = (s) =>
-    s.progress != null
-      ? s.progress
-      : (duration > 0 ? (s.t - first.t) / duration : 0);
 
   // Fraction of the WHOLE game spent close / tied, measured with progress as the
   // clock. A snapshot's margin holds from its progress until the next snapshot
@@ -251,7 +247,7 @@ export function analyzeMomentum(timeline, sport, opts = {}) {
 //
 //     (deficitErased / denom) × progressAtCompletion × 10
 //
-// `denom` is the sport's "meaningful lead" size (see COMEBACK_DENOM), so the
+// `denom` is the sport's "meaningful lead" size (comebackDenom in SPORTS), so the
 // deficit is measured relative to what counts as a real hole in that sport.
 // After firing, the team must fall behind again to re-arm — so a see-saw game
 // can fire multiple times. The total is summed and capped at 15. Works for
@@ -264,17 +260,16 @@ export function analyzeComeback(timeline, sport, opts = {}) {
   // rally isn't counted twice.
   if (BASKETBALL.has(opts.sportKey)) return { comebackBonus: 0, signals: [] };
 
-  const denom    = COMEBACK_DENOM[opts.sportKey] ?? sport?.margins?.good ?? 2;
+  // The deficit erased is measured relative to the sport's "meaningful lead"
+  // size — `comebackDenom` in the SPORTS config where a sport's comeback feel
+  // differs from `margins.good` (a 3-run MLB hole and a 10-point NFL hole are
+  // the unit of a "real" comeback), else margins.good.
+  const denom    = sport?.comebackDenom ?? sport?.margins?.good ?? 2;
   const signals  = [];
   let bonus      = 0;
 
   const first    = timeline[0];
-  const last     = timeline[timeline.length - 1];
-  const duration = last.t - first.t;
-  const progOf   = (s) =>
-    s.progress != null
-      ? s.progress
-      : (duration > 0 ? (s.t - first.t) / duration : 0);
+  const progOf   = makeProgOf(timeline);
 
   // Worst deficit each team has faced since it was last tied-or-ahead. Seeded
   // from the first snapshot in case the timeline opens mid-deficit.
@@ -421,13 +416,10 @@ function getLeader(home, away) {
   return 'tied';
 }
 
-// Sport-specific "close" threshold (within this many points = close)
+// Sport-specific "close" threshold (within this many points = close), from the
+// SPORTS config's closeMargin. Soccer leagues missing a config entry are
+// decided by a single goal; anything else unknown defaults to 2.
 function closenessThreshold(sport) {
   const key = sport?.sport || sport;
-  const thresholds = {
-    nba: 5, wnba: 5, nfl: 7, mlb: 1, nhl: 1,
-    mls: 1, epl: 1, ucl: 1, nwsl: 1, intl: 1, wc: 1, cfb: 7, cbb: 5, wcbb: 5,
-  };
-  // Soccer leagues not explicitly listed are decided by a single goal.
-  return thresholds[key] ?? (isSoccer(key) ? 1 : 2);
+  return SPORTS[key]?.closeMargin ?? (isSoccer(key) ? 1 : 2);
 }

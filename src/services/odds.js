@@ -20,6 +20,12 @@ const HEADERS = { 'User-Agent': 'Squeaker/1.0' };
 // null is also stored (meaning ESPN had no odds) so we don't re-fetch those either.
 const _memOdds = new Map(); // gameId → odds object | null
 
+// Called by warmup.js when a game ages out of the display window, so this Map
+// doesn't grow unboundedly over a long-running process.
+export function pruneOdds(id) {
+  _memOdds.delete(id);
+}
+
 // Get the frozen odds for a game.
 //   1. Return from in-memory cache (0 Redis ops) — the common path each cycle.
 //   2. Load from Redis (1 GET) — first call after a process restart.

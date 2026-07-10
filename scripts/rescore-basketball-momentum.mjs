@@ -114,8 +114,13 @@ function scoreGame(g, data, runOpts) {
   const upset = upsetById.get(g.id) ?? 0;
 
   // Basketball has no empty-net goals, so the closeness margin is the real margin.
-  const bd = calcExcitementBreakdown(margin, isOT, cb.comebackBonus, cfg,
-    mom.momentumBonus, 1.0, upset, stats.score);
+  const bd = calcExcitementBreakdown({
+    margin, sport: cfg, isOT,
+    comebackBonus: cb.comebackBonus,
+    momentumBonus: mom.momentumBonus,
+    upsetBonus: upset,
+    statsBonus: stats.score,
+  });
 
   return {
     id: g.id, sport: g.sport, date: g.date,

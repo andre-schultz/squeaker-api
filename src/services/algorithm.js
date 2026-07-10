@@ -20,21 +20,13 @@
 // Bonuses are independent — each contributes its full value if earned.
 // WP-drama is tracked separately as part of the Action score, not here.
 
-export function calcExcitement(
-  margin,
-  isOT,
-  comebackBonus,
-  sport,
-  momentumBonus = 0,
-  progress = 1.0,
-  upsetBonus = 0,
-  statsBonus = 0,
-  isShootout = false,
-) {
-  return calcExcitementBreakdown(
-    margin, isOT, comebackBonus, sport,
-    momentumBonus, progress, upsetBonus, statsBonus, isShootout,
-  ).final;
+// Both entry points take a single options object:
+//   { margin, sport, isOT, isShootout, comebackBonus, momentumBonus,
+//     progress, upsetBonus, statsBonus }
+// `margin` and `sport` (a SPORTS config entry) are required; everything else
+// defaults to "no bonus" / full progress.
+export function calcExcitement(opts) {
+  return calcExcitementBreakdown(opts).final;
 }
 
 // Returns the per-bonus breakdown used for the audit log. The `final` field is
@@ -44,17 +36,17 @@ export function calcExcitement(
 // For live games the raw score is scaled by how far through the game we are:
 // a 0-0 tie in the 1st inning scores much lower than 0-0 in the 9th. Early
 // game blends 30% raw + 70% progress-weighted; the final 20% applies full raw.
-export function calcExcitementBreakdown(
+export function calcExcitementBreakdown({
   margin,
-  isOT,
-  comebackBonus,
   sport,
+  isOT = false,
+  isShootout = false,
+  comebackBonus = 0,
   momentumBonus = 0,
   progress = 1.0,
   upsetBonus = 0,
   statsBonus = 0,
-  isShootout = false,
-) {
+}) {
   const cls = closenessScore(margin, sport, isOT);
   const otBonus = isOT ? 5 : 0;
   // A shootout (soccer penalties / hockey SO) is a distinct, higher-drama ending
