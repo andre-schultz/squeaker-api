@@ -115,23 +115,15 @@ async function runGameCycle() {
     // This is the ONLY time we read game lists from Redis for population
     // purposes. After this, done games live purely in _doneGames.
     if (!_initialized) {
-      // The day shards are the authoritative snapshot. games:all is only read
-      // as a one-time bootstrap on the first deploy of sharding, when a
-      // pre-sharding process left that key behind and no index exists yet.
-      // It is never written again, so it disappears once its TTL lapses.
+      // The day shards are the snapshot. An empty index means a genuinely cold
+      // cache: the window rebuilds from ESPN over the following days rather
+      // than being restored. (Seeding an existing deployment's history into
+      // shards is a one-off — see scripts/migrate-day-shards.mjs.)
       const index = (await getCache('games:index')) || [];
-      let prev = [];
-      if (index.length) {
-        const shards = await Promise.all(
-          index.map(d => getCache(`games:day:${d.date}`).then(s => s || []))
-        );
-        prev = shards.flat();
-        console.log(`[games] boot: read ${index.length} day shards`);
-      } else {
-        prev = (await getCache('games:all')) || [];
-        console.log('[games] boot: no day index — falling back to games:all');
-      }
-      for (const g of prev) {
+      const shards = await Promise.all(
+        index.map(d => getCache(`games:day:${d.date}`).then(s => s || []))
+      );
+      for (const g of shards.flat()) {
         if (g.done) _doneGames.set(g.id, g);
       }
       // Pre-populate espn.js frozenGames so the first ESPN cycle skips full
@@ -141,7 +133,7 @@ async function runGameCycle() {
       // progress when the process went down, so they can be frozen correctly
       // when they finish rather than falling back to null.
       seedPregameMeta((await getCache('games:upcoming')) || []);
-      console.log(`[games] boot: recovered ${_doneGames.size} done games from cache`);
+      console.log(`[games] boot: recovered ${_doneGames.size} done games from ${index.length} day shards`);
       _initialized = true;
     }
 

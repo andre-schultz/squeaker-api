@@ -203,13 +203,6 @@ export const AUDIT_ENABLED = isTruthy(process.env.AUDIT_ENABLED);
 // ── Time window ───────────────────────────────────────────────────────────────
 export const HOURS_WINDOW = 288; // show games from last 12 days
 
-// The bare GET /api/games (no ?date=) still returns one flat list, because app
-// versions shipped before per-day loading depend on it. It is composed from the
-// newest LEGACY_DAYS shards per request — 5 days keeps those clients seeing
-// exactly the window they always have, without the 12-day list they can't page
-// through. New clients use ?date= and never fetch it.
-export const LEGACY_DAYS = 5;
-
 // ET calendar date ('YYYY-MM-DD') for a game timestamp. Day sharding is
 // ET-anchored like everything else here (ESPN's scoreboard dates are ET), so a
 // game lands on exactly one day regardless of server or client timezone. Note
