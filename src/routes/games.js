@@ -3,7 +3,7 @@ import { fetchAllGames } from '../services/espn.js';
 import { getCache } from '../services/cache.js';
 import { getStats, getStatsTimeline } from '../services/stats.js';
 import { getApproxStats } from '../services/approxStats.js';
-import { espnGamecastUrl } from '../config.js';
+import { espnGamecastUrl, LEGACY_DAYS } from '../config.js';
 
 const router = express.Router();
 
@@ -34,7 +34,15 @@ router.get('/days', async (req, res) => {
 
 // GET /api/games
 //   ?date=YYYY-MM-DD → that single ET day, sorted by excitement desc.
-//   (no date)        → legacy flat list, capped to LEGACY_HOURS_WINDOW.
+//   (no date)        → flat list of the most recent LEGACY_DAYS days, for app
+//                      versions shipped before per-day loading.
+//
+// The legacy list is composed from the day shards on request rather than being
+// stored as its own key. Keeping a second copy in Redis meant writing the whole
+// window every cycle purely for old clients; composing costs a handful of GETs
+// on a route that now sees almost no traffic, and can never drift from the
+// shards it is built from.
+//
 // Always served from cache. Falls back to live fetch if cache is empty.
 router.get('/', async (req, res) => {
   try {
@@ -50,8 +58,14 @@ router.get('/', async (req, res) => {
       return res.json(withLinks((await getCache(`games:day:${date}`)) || []));
     }
 
-    const cached = await getCache('games:all');
-    if (cached && cached.length > 0) return res.json(withLinks(cached));
+    const index = (await getCache('games:index')) || [];
+    if (index.length > 0) {
+      const shards = await Promise.all(
+        index.slice(0, LEGACY_DAYS).map(d => getCache(`games:day:${d.date}`).then(s => s || []))
+      );
+      const cached = shards.flat().sort((a, b) => b.excitement - a.excitement);
+      if (cached.length > 0) return res.json(withLinks(cached));
+    }
 
     // Cache miss — cold boot before the first warmup cycle, or the cycle has
     // been failing for longer than the TTL. Fetch live so the request is still

@@ -22,7 +22,6 @@ import {
   AUDIT_ENABLED,
   SPORTS,
   HOURS_WINDOW,
-  LEGACY_HOURS_WINDOW,
   etDayKey,
 } from '../config.js';
 
@@ -56,15 +55,15 @@ function isOffHours() {
 // ── Game lifecycle tracking ───────────────────────────────────────────────────
 // _doneGames holds every game that has finished, keyed by game ID. It is the
 // authoritative in-memory store for done games — nothing reads Redis or calls
-// ESPN for these games again. It is initialized from games:all on first run so
-// a process restart recovers immediately from the single existing Redis key.
+// ESPN for these games again. It is initialized from the day shards on first
+// run so a process restart recovers the full window immediately.
 //
 // _initialized gates the one-time boot load so subsequent cycles skip it.
 const _doneGames   = new Map(); // gameId → done game object (includes doneAt)
 let   _initialized = false;
 
 // ── Per-day shards ────────────────────────────────────────────────────────────
-// games:all was a single blob covering the whole window — ~1.7 MB in winter,
+// games:all used to be a single blob covering the whole window — ~1.7 MB in winter,
 // rewritten every 3 minutes even though all but the newest day is immutable.
 // Games are now also written as games:day:{YYYY-MM-DD} shards so the app can
 // load one day at a time, and a shard is only rewritten when its contents
@@ -74,6 +73,12 @@ let   _initialized = false;
 // writes. It starts empty after a restart, so the first cycle rewrites every
 // shard — which also refreshes their TTLs, making the restart self-healing.
 const _shardSigs = new Map(); // 'YYYY-MM-DD' → signature string
+
+// The composed live+done list from the most recent game cycle. The stats cycle
+// used to re-read this from games:all; now that the game cycle no longer writes
+// that key, it hands the list over in memory instead — same data, one less
+// Redis round-trip, and no dependency on a key that exists only for old clients.
+let _lastAllGames = [];
 
 // A day's shard is identified by which games it holds and what state they're
 // in. Live games change excitement every cycle, so their score is part of the
@@ -89,14 +94,14 @@ function groupByDay(games) {
   const byDay = new Map();
   for (const g of games) {
     const key = etDayKey(g.date);
-    if (!key) continue; // malformed date — excluded from day browsing, still in games:all
+    if (!key) continue; // malformed date — cannot be filed under a day
     if (!byDay.has(key)) byDay.set(key, []);
     byDay.get(key).push(g);
   }
   return byDay;
 }
 
-// ── Game cycle (refresh games:all) ────────────────────────────────────────────
+// ── Game cycle (refresh the day shards + index) ───────────────────────────────
 
 let gameRunning = false;
 
@@ -107,13 +112,13 @@ async function runGameCycle() {
     const now = new Date().toISOString();
 
     // ── One-time boot: recover done games from the previous Redis snapshot ──
-    // This is the ONLY time we read games:all from Redis for population
+    // This is the ONLY time we read game lists from Redis for population
     // purposes. After this, done games live purely in _doneGames.
     if (!_initialized) {
-      // Prefer the day shards: games:all is capped to the legacy 5-day window,
-      // so restoring from it alone would silently truncate the 12-day history
-      // on every restart. Fall back to games:all when no index exists yet
-      // (first deploy of sharding, or the index TTL lapsed).
+      // The day shards are the authoritative snapshot. games:all is only read
+      // as a one-time bootstrap on the first deploy of sharding, when a
+      // pre-sharding process left that key behind and no index exists yet.
+      // It is never written again, so it disappears once its TTL lapses.
       const index = (await getCache('games:index')) || [];
       let prev = [];
       if (index.length) {
@@ -177,10 +182,11 @@ async function runGameCycle() {
     const liveGames = freshGames.filter(g => g.live);
     const allGames  = [...liveGames, ..._doneGames.values()]
       .sort((a, b) => b.excitement - a.excitement);
+    _lastAllGames = allGames;
 
     // ── Per-day shards + index ────────────────────────────────────────────
-    // Written before games:all so a client that reads the index immediately
-    // after it appears always finds the shards it points at.
+    // Shards are written before the index so a client that reads the index the
+    // moment it appears always finds every shard it points at.
     const byDay = groupByDay(allGames);
     const days  = [...byDay.keys()].sort((a, b) => b.localeCompare(a)); // newest first
 
@@ -210,19 +216,13 @@ async function runGameCycle() {
     });
     await setCache('games:index', index, CACHE_TTL.gamesIndex);
 
-    // ── Legacy flat list — pre-per-day app versions ───────────────────────
-    const legacyCutoff = Date.now() - LEGACY_HOURS_WINDOW * 60 * 60 * 1000;
-    const legacyGames  = allGames.filter(g => {
-      const ts = new Date(g.date).getTime();
-      return !Number.isFinite(ts) || ts >= legacyCutoff;
-    });
-
-    const ttl = liveGames.length > 0 ? CACHE_TTL.liveGames : CACHE_TTL.finishedGames;
-    await setCache('games:all', legacyGames, ttl);
+    // games:all is intentionally not written any more. The legacy flat list is
+    // composed from these shards on request (see routes/games.js), so there is
+    // no second copy of the window to keep in sync or pay for on every cycle.
     await setCache('games:upcoming', upcoming, CACHE_TTL.finishedGames);
 
     console.log(`[games] refreshed — ${liveGames.length} live, ${_doneGames.size} done, ${upcoming.length} upcoming`);
-    console.log(`[games] shards — ${days.length} days, ${written} rewritten, legacy list ${legacyGames.length}`);
+    console.log(`[games] shards — ${days.length} days, ${written} rewritten`);
     console.log(`[redis] game-cycle — ${fmtCounters(drainCacheCounters())}`);
   } catch (e) {
     console.error('[games] cycle failed:', e.message);
@@ -308,9 +308,10 @@ async function runStatsCycle() {
   statsRunning = true;
   const t0 = Date.now();
   try {
-    const games = (await getCache('games:all')) || [];
-
-    const candidates = games.filter(isActiveCandidate);
+    // Handed over by the game cycle rather than re-read from Redis. Empty only
+    // before the first game cycle completes, in which case this round no-ops
+    // and the next one picks the games up.
+    const candidates = _lastAllGames.filter(isActiveCandidate);
 
     if (candidates.length === 0) return;
 
