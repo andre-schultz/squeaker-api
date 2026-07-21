@@ -166,6 +166,16 @@ export const CACHE_TTL = {
   approxStats:    7 * 24 * 3600, // 7 days — fuzzed combined totals (finished games)
   timeline:       7 * 24 * 3600, // 7 days — per-score-change timeline
   history:        7 * 24 * 3600, // 7 days — per-finished-game history row
+  // Per-day game shards are only rewritten when that day's contents change, so
+  // unlike games:all they can sit untouched for the life of the window. The TTL
+  // has to outlive HOURS_WINDOW or a quiet past day would silently expire.
+  dayShard:      13 * 24 * 3600, // 13 days — one day's games (games:day:YYYY-MM-DD)
+  // Matches dayShard deliberately. The index is rewritten every cycle, so a
+  // short TTL would cost nothing in the happy path — but if the cycle dies, an
+  // expired index leaves the app with no days to show while 13 days of valid
+  // shards sit untouched behind it. Ageing the two out together means a stalled
+  // cycle degrades to slightly stale data rather than an empty screen.
+  gamesIndex:    13 * 24 * 3600, // 13 days — day index
 };
 
 // ── Win-probability sports ────────────────────────────────────────────────────
@@ -191,6 +201,24 @@ function isTruthy(v) {
 export const AUDIT_ENABLED = isTruthy(process.env.AUDIT_ENABLED);
 
 // ── Time window ───────────────────────────────────────────────────────────────
-export const HOURS_WINDOW = 120; // show games from last 5 days
+export const HOURS_WINDOW = 288; // show games from last 12 days
+
+// The bare GET /api/games (no ?date=) still returns one flat list, because app
+// versions shipped before per-day loading depend on it. Capping it at the old
+// 5-day window keeps those clients behaving exactly as they always have, and
+// stops the legacy blob from growing to 12 days' worth (~1.7 MB in winter)
+// on every warmup write. New clients use ?date= and never fetch it.
+export const LEGACY_HOURS_WINDOW = 120;
+
+// ET calendar date ('YYYY-MM-DD') for a game timestamp. Day sharding is
+// ET-anchored like everything else here (ESPN's scoreboard dates are ET), so a
+// game lands on exactly one day regardless of server or client timezone. Note
+// this moves late West-Coast games a day forward relative to local-time
+// grouping — a 9pm PT start is already tomorrow in ET.
+export function etDayKey(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
 
 

@@ -39,6 +39,40 @@ export function preFreezeGames(games) {
 // Keeps both Maps in sync so stale entries don't accumulate indefinitely.
 export function pruneFrozenGame(id) {
   frozenGames.delete(id);
+  _pregameMeta.delete(id);
+}
+
+// ── Pre-game record / rank snapshots ──────────────────────────────────────────
+// ESPN's `records` on a FINAL game is POST-game: the day after a win, the
+// scoreboard shows the same record the final card showed, so the result is
+// already baked in. Rendering that on a completed card would leak the outcome
+// to a user who saw the same matchup pre-game (52-48 → 53-48 = home won),
+// which breaks the app's spoiler-free contract.
+//
+// So we snapshot record + rank on every sighting where the game is NOT done,
+// and serve that frozen snapshot once it finishes. Overwriting on each pre-game
+// sighting means the last write before the game ends is the closest to tipoff.
+// The snapshot rides along on the done-game object into _doneGames → games:all,
+// so it survives a restart even though this Map does not.
+const _pregameMeta = new Map(); // gameId → { home: {record, rank}, away: {record, rank} }
+
+// Seed from a cached games:upcoming list on boot so a game that is already live
+// when the process starts still has a pre-game record to freeze.
+export function seedPregameMeta(upcoming) {
+  for (const g of upcoming) {
+    if (_pregameMeta.has(g.id)) continue;
+    _pregameMeta.set(g.id, {
+      home: { record: g.home?.record ?? null, rank: g.home?.rank ?? null },
+      away: { record: g.away?.record ?? null, rank: g.away?.rank ?? null },
+    });
+  }
+}
+
+function snapshotPregame(id, home, away) {
+  _pregameMeta.set(id, {
+    home: { record: teamRecord(home), rank: teamRank(home) },
+    away: { record: teamRecord(away), rank: teamRank(away) },
+  });
 }
 
 // ── Out-of-season league suppression ──────────────────────────────────────────
@@ -188,6 +222,10 @@ async function parseEvent(ev, sportKey, cfg) {
   const away  = comps.find(c => c.homeAway === 'away');
   if (!home || !away) return null;
 
+  // Still in progress — refresh the pre-game snapshot. ESPN has not folded this
+  // game into either team's record yet, so what it reports now is still pre-game.
+  if (!done) snapshotPregame(ev.id, home, away);
+
   const homeScore = parseFloat(home.score) || 0;
   const awayScore = parseFloat(away.score) || 0;
   const margin    = Math.abs(homeScore - awayScore);
@@ -302,15 +340,25 @@ async function parseEvent(ev, sportKey, cfg) {
   });
   const excitement = excitementBreakdown.final;
 
-  const mkTeam = (T, score, winner) => ({ ...baseTeam(T), score, winner: !!winner });
+  // Frozen pre-game record + rank. Never read from `T` here: on a done game
+  // ESPN's own values already include this result and would spoil it. A game
+  // first seen after it finished has no snapshot and simply reports null.
+  const pre = _pregameMeta.get(ev.id);
+  const mkTeam = (T, score, winner, side) => ({
+    ...baseTeam(T),
+    score,
+    winner: !!winner,
+    record: pre?.[side]?.record ?? null,
+    rank:   pre?.[side]?.rank   ?? null,
+  });
 
   const game = {
     id:              ev.id,
     sport:           sportKey,
     sportName:       cfg.name,
     sportEmoji:      cfg.emoji,
-    home:            mkTeam(home, homeScore, home.winner),
-    away:            mkTeam(away, awayScore, away.winner),
+    home:            mkTeam(home, homeScore, home.winner, 'home'),
+    away:            mkTeam(away, awayScore, away.winner, 'away'),
     margin,
     isOT,
     isShootout,
@@ -391,9 +439,14 @@ function parseUpcomingEvent(ev, sportKey, cfg) {
   const away  = comps.find(c => c.homeAway === 'away');
   if (!home || !away) return null;
 
+  // Pre-game by definition, so ESPN's live values are safe to read directly —
+  // and worth snapshotting, since this is the last shape we see before tipoff.
+  snapshotPregame(ev.id, home, away);
+
   const mkTeam = (T) => ({
     ...baseTeam(T),
-    record: T.records?.find(r => r.type === 'total')?.summary ?? null,
+    record: teamRecord(T),
+    rank:   teamRank(T),
   });
 
   const rawOdds = co.odds?.[0];
@@ -528,6 +581,20 @@ function estimateProgress(sportKey, detail, comps, period) {
     }
   } catch {}
   return 0.5;
+}
+
+// Overall W-L summary, e.g. "53-48" (NHL "W-L-OTL", soccer "W-D-L").
+function teamRecord(T) {
+  return T.records?.find(r => r.type === 'total')?.summary ?? null;
+}
+
+// Poll rank, college leagues only (CFB / CBB / WCBB). ESPN uses 99 as the
+// "unranked" sentinel, and some pro leagues (NHL) return a blanket 99 for every
+// team while others (NFL, NBA, MLB) omit curatedRank entirely — so 99 and
+// missing both collapse to null and nothing renders outside college.
+function teamRank(T) {
+  const r = T.curatedRank?.current;
+  return Number.isFinite(r) && r > 0 && r < 99 ? r : null;
 }
 
 // Shared team fields used by both the scored-game and upcoming-game shapes.

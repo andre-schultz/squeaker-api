@@ -21,10 +21,35 @@ function withLinks(games) {
 // burst of traffic during an outage triggers at most one ESPN fan-out at a time.
 let fallbackInflight = null;
 
+// GET /api/games/days — the day index driving the date chips.
+// [{ date: 'YYYY-MM-DD', count, live, sports: [...] }], newest day first.
+router.get('/days', async (req, res) => {
+  try {
+    res.json((await getCache('games:index')) || []);
+  } catch (e) {
+    console.error('GET /api/games/days error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch days' });
+  }
+});
+
 // GET /api/games
+//   ?date=YYYY-MM-DD → that single ET day, sorted by excitement desc.
+//   (no date)        → legacy flat list, capped to LEGACY_HOURS_WINDOW.
 // Always served from cache. Falls back to live fetch if cache is empty.
 router.get('/', async (req, res) => {
   try {
+    const { date } = req.query;
+    if (date !== undefined) {
+      // Strict format check — the value becomes part of a Redis key.
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+      }
+      // An empty/missing shard is a legitimate answer (a day with no games, or
+      // one aged out of the window), so return [] rather than falling back to
+      // a live ESPN fetch that could not produce that day anyway.
+      return res.json(withLinks((await getCache(`games:day:${date}`)) || []));
+    }
+
     const cached = await getCache('games:all');
     if (cached && cached.length > 0) return res.json(withLinks(cached));
 

@@ -9,7 +9,7 @@
 //  • All HTTP responses are drained inside espn.js even on
 //    error paths so undici sockets get released promptly.
 
-import { fetchAllEvents, preFreezeGames, pruneFrozenGame } from './espn.js';
+import { fetchAllEvents, preFreezeGames, pruneFrozenGame, seedPregameMeta } from './espn.js';
 import { recordStatsSnapshot } from './stats.js';
 import { recordApproxStats } from './approxStats.js';
 import { recordStatsBonus } from './statsBonus.js';
@@ -22,6 +22,8 @@ import {
   AUDIT_ENABLED,
   SPORTS,
   HOURS_WINDOW,
+  LEGACY_HOURS_WINDOW,
+  etDayKey,
 } from '../config.js';
 
 // Format a drained-counters snapshot as a compact log string.
@@ -61,6 +63,39 @@ function isOffHours() {
 const _doneGames   = new Map(); // gameId → done game object (includes doneAt)
 let   _initialized = false;
 
+// ── Per-day shards ────────────────────────────────────────────────────────────
+// games:all was a single blob covering the whole window — ~1.7 MB in winter,
+// rewritten every 3 minutes even though all but the newest day is immutable.
+// Games are now also written as games:day:{YYYY-MM-DD} shards so the app can
+// load one day at a time, and a shard is only rewritten when its contents
+// actually change (in practice: today, plus a day that gains a late finisher).
+//
+// _shardSigs holds the last-written signature per day so we can skip no-op
+// writes. It starts empty after a restart, so the first cycle rewrites every
+// shard — which also refreshes their TTLs, making the restart self-healing.
+const _shardSigs = new Map(); // 'YYYY-MM-DD' → signature string
+
+// A day's shard is identified by which games it holds and what state they're
+// in. Live games change excitement every cycle, so their score is part of the
+// signature; done games are frozen, so id+doneAt is enough to spot an addition.
+function shardSignature(games) {
+  return games
+    .map(g => `${g.id}:${g.live ? `L${g.excitement}` : `D${g.doneAt ?? ''}`}`)
+    .sort()
+    .join('|');
+}
+
+function groupByDay(games) {
+  const byDay = new Map();
+  for (const g of games) {
+    const key = etDayKey(g.date);
+    if (!key) continue; // malformed date — excluded from day browsing, still in games:all
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(g);
+  }
+  return byDay;
+}
+
 // ── Game cycle (refresh games:all) ────────────────────────────────────────────
 
 let gameRunning = false;
@@ -75,13 +110,32 @@ async function runGameCycle() {
     // This is the ONLY time we read games:all from Redis for population
     // purposes. After this, done games live purely in _doneGames.
     if (!_initialized) {
-      const prev = (await getCache('games:all')) || [];
+      // Prefer the day shards: games:all is capped to the legacy 5-day window,
+      // so restoring from it alone would silently truncate the 12-day history
+      // on every restart. Fall back to games:all when no index exists yet
+      // (first deploy of sharding, or the index TTL lapsed).
+      const index = (await getCache('games:index')) || [];
+      let prev = [];
+      if (index.length) {
+        const shards = await Promise.all(
+          index.map(d => getCache(`games:day:${d.date}`).then(s => s || []))
+        );
+        prev = shards.flat();
+        console.log(`[games] boot: read ${index.length} day shards`);
+      } else {
+        prev = (await getCache('games:all')) || [];
+        console.log('[games] boot: no day index — falling back to games:all');
+      }
       for (const g of prev) {
         if (g.done) _doneGames.set(g.id, g);
       }
       // Pre-populate espn.js frozenGames so the first ESPN cycle skips full
       // processing for done games that are already in _doneGames.
       preFreezeGames([..._doneGames.values()]);
+      // Recover pre-game record/rank for games that were still scheduled or in
+      // progress when the process went down, so they can be frozen correctly
+      // when they finish rather than falling back to null.
+      seedPregameMeta((await getCache('games:upcoming')) || []);
       console.log(`[games] boot: recovered ${_doneGames.size} done games from cache`);
       _initialized = true;
     }
@@ -99,7 +153,7 @@ async function runGameCycle() {
       }
     }
 
-    // ── Prune done games older than the display window (5 days) ──────────
+    // ── Prune done games older than the display window (12 days) ─────────
     // Every per-game in-process store is pruned together — _doneGames here,
     // plus espn.js frozenGames, odds.js _memOdds, probabilities.js
     // doneSnapshotted, and audit.js doneAudited — so none of them accumulate
@@ -124,11 +178,51 @@ async function runGameCycle() {
     const allGames  = [...liveGames, ..._doneGames.values()]
       .sort((a, b) => b.excitement - a.excitement);
 
+    // ── Per-day shards + index ────────────────────────────────────────────
+    // Written before games:all so a client that reads the index immediately
+    // after it appears always finds the shards it points at.
+    const byDay = groupByDay(allGames);
+    const days  = [...byDay.keys()].sort((a, b) => b.localeCompare(a)); // newest first
+
+    let written = 0;
+    for (const date of days) {
+      const dayGames = byDay.get(date).sort((a, b) => b.excitement - a.excitement);
+      const sig = shardSignature(dayGames);
+      if (_shardSigs.get(date) === sig) continue; // unchanged since last write
+      await setCache(`games:day:${date}`, dayGames, CACHE_TTL.dayShard);
+      _shardSigs.set(date, sig);
+      written++;
+    }
+    // Drop signatures for days that have aged out so the Map can't grow forever.
+    for (const date of _shardSigs.keys()) {
+      if (!byDay.has(date)) _shardSigs.delete(date);
+    }
+
+    // The index drives the date chips, so it has to be fetchable on its own,
+    // before any shard is loaded — one small row per day.
+    const index = days.map(date => {
+      const dayGames = byDay.get(date);
+      return {
+        date,
+        count: dayGames.length,
+        live:  dayGames.filter(g => g.live).length,
+      };
+    });
+    await setCache('games:index', index, CACHE_TTL.gamesIndex);
+
+    // ── Legacy flat list — pre-per-day app versions ───────────────────────
+    const legacyCutoff = Date.now() - LEGACY_HOURS_WINDOW * 60 * 60 * 1000;
+    const legacyGames  = allGames.filter(g => {
+      const ts = new Date(g.date).getTime();
+      return !Number.isFinite(ts) || ts >= legacyCutoff;
+    });
+
     const ttl = liveGames.length > 0 ? CACHE_TTL.liveGames : CACHE_TTL.finishedGames;
-    await setCache('games:all', allGames, ttl);
+    await setCache('games:all', legacyGames, ttl);
     await setCache('games:upcoming', upcoming, CACHE_TTL.finishedGames);
 
     console.log(`[games] refreshed — ${liveGames.length} live, ${_doneGames.size} done, ${upcoming.length} upcoming`);
+    console.log(`[games] shards — ${days.length} days, ${written} rewritten, legacy list ${legacyGames.length}`);
     console.log(`[redis] game-cycle — ${fmtCounters(drainCacheCounters())}`);
   } catch (e) {
     console.error('[games] cycle failed:', e.message);
