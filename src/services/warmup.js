@@ -73,6 +73,7 @@ let   _initialized = false;
 // writes. It starts empty after a restart, so the first cycle rewrites every
 // shard — which also refreshes their TTLs, making the restart self-healing.
 const _shardSigs = new Map(); // 'YYYY-MM-DD' → signature string
+let   _indexSig  = null;      // signature of the last-written games:index
 
 // The composed live+done list from the most recent game cycle. The stats cycle
 // used to re-read this from games:all; now that the game cycle no longer writes
@@ -197,16 +198,28 @@ async function runGameCycle() {
     }
 
     // The index drives the date chips, so it has to be fetchable on its own,
-    // before any shard is loaded — one small row per day.
+    // before any shard is loaded — one small row per day. `sports` lets the app
+    // show every league that has games anywhere in the window and jump the day
+    // selection to match a chosen league, without loading each day to find out.
     const index = days.map(date => {
       const dayGames = byDay.get(date);
       return {
         date,
-        count: dayGames.length,
-        live:  dayGames.filter(g => g.live).length,
+        count:  dayGames.length,
+        live:   dayGames.filter(g => g.live).length,
+        sports: [...new Set(dayGames.map(g => g.sport))],
       };
     });
-    await setCache('games:index', index, CACHE_TTL.gamesIndex);
+    // Same dirty-check as the shards: only rewrite when a day's summary actually
+    // changed. On a quiet cycle nothing here differs, so the write is skipped.
+    // The index always changes at least daily (the window slides, live counts
+    // move), so its TTL is refreshed well inside the 13-day expiry.
+    const indexSig = JSON.stringify(index);
+    const indexChanged = indexSig !== _indexSig;
+    if (indexChanged) {
+      await setCache('games:index', index, CACHE_TTL.gamesIndex);
+      _indexSig = indexSig;
+    }
 
     // games:all is intentionally not written any more. The legacy flat list is
     // composed from these shards on request (see routes/games.js), so there is
@@ -214,7 +227,7 @@ async function runGameCycle() {
     await setCache('games:upcoming', upcoming, CACHE_TTL.finishedGames);
 
     console.log(`[games] refreshed — ${liveGames.length} live, ${_doneGames.size} done, ${upcoming.length} upcoming`);
-    console.log(`[games] shards — ${days.length} days, ${written} rewritten`);
+    console.log(`[games] shards — ${days.length} days, ${written} rewritten${indexChanged ? ', index updated' : ''}`);
     console.log(`[redis] game-cycle — ${fmtCounters(drainCacheCounters())}`);
   } catch (e) {
     console.error('[games] cycle failed:', e.message);

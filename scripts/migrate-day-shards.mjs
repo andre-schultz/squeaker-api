@@ -66,8 +66,9 @@ for (const g of games) {
 const dates = [...byDay.keys()].sort((a, b) => b.localeCompare(a)); // newest first
 const index = dates.map(date => ({
   date,
-  count: byDay.get(date).length,
-  live:  byDay.get(date).filter(g => g.live).length,
+  count:  byDay.get(date).length,
+  live:   byDay.get(date).filter(g => g.live).length,
+  sports: [...new Set(byDay.get(date).map(g => g.sport))],
 }));
 
 console.log(`games:all — ${games.length} games${undated ? ` (${undated} undated, skipped)` : ''}`);
