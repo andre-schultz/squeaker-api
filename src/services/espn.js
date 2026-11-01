@@ -378,6 +378,7 @@ async function parseEvent(ev, sportKey, cfg) {
     desc:            excitementDesc(closenessMargin, isOT, comebackBonus > 0, cfg),
     date:            ev.date,
     odds,                     // frozen pre-game line for display
+    broadcasts:      (co.broadcasts || []).map(b => ({ market: b.market, names: b.names })),
     currentLiveActionBuzz,    // 0-100, computed from full WP history; retains last value after game ends
     links:           { espn: espnGamecastUrl(sportKey, ev.id) }, // server-built "cast ↗" link
   };
