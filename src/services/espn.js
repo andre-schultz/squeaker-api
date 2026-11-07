@@ -180,14 +180,26 @@ async function fetchSportDate(key, cfg, date) {
       return { ok, games, upcoming };
     }
     const data = await res.json();
-    ok = true; // parseable 200 — this date's emptiness (if any) is real, not an error
     const events = data.events || [];
+    // Each event is parsed in isolation: one malformed event (e.g. a TBD
+    // competitor with no `team`) must not discard every other game on the
+    // date — a big CFB Saturday slate used to vanish entirely that way.
+    let failed = 0;
     for (const ev of events) {
-      const game = await parseEvent(ev, key, cfg);
-      if (game) { games.push(game); continue; }
-      const upcomingGame = parseUpcomingEvent(ev, key, cfg);
-      if (upcomingGame) upcoming.push(upcomingGame);
+      try {
+        const game = await parseEvent(ev, key, cfg);
+        if (game) { games.push(game); continue; }
+        const upcomingGame = parseUpcomingEvent(ev, key, cfg);
+        if (upcomingGame) upcoming.push(upcomingGame);
+      } catch (e) {
+        failed++;
+        console.error(`ESPN parse error [${key}] event ${ev?.id ?? '?'} (${date}):`, e.message);
+      }
     }
+    // Only a cleanly parsed response counts as a real answer for out-of-season
+    // suppression. If every event failed to parse, the emptiness is our bug,
+    // not ESPN's schedule — don't let it mark the league dormant for the day.
+    ok = failed === 0 || games.length + upcoming.length > 0;
   } catch (e) {
     console.error(`ESPN fetch error [${key}]:`, e.message);
   }
@@ -600,12 +612,14 @@ function teamRank(T) {
 
 // Shared team fields used by both the scored-game and upcoming-game shapes.
 function baseTeam(T) {
+  // ESPN occasionally lists a placeholder competitor (TBD) without a `team`.
+  const t = T.team || {};
   return {
-    name:     T.team.shortDisplayName || T.team.displayName,
-    fullName: T.team.displayName,
-    abbr:     T.team.abbreviation,
-    logo:     T.team.logo,
-    color:    T.team.color ? `#${T.team.color}` : '#374151',
+    name:     t.shortDisplayName || t.displayName || 'TBD',
+    fullName: t.displayName || 'TBD',
+    abbr:     t.abbreviation || 'TBD',
+    logo:     t.logo ?? null,
+    color:    t.color ? `#${t.color}` : '#374151',
   };
 }
 
