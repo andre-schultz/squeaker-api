@@ -16,6 +16,7 @@
 //   node scripts/restore-rescored.mjs --apply              # write the shards
 //   node scripts/restore-rescored.mjs --keep cfb:2026-11-07 [--apply]
 //        leave that league+day re-scored (e.g. games missed during an outage)
+//   ... --sync-history   also update kept games' history rows to the kept score
 //
 // Then RESTART the server: it holds the game list in memory and would write the
 // re-scored values back into a day's shard the next time that day changes.
@@ -29,6 +30,8 @@ const { values: args } = parseArgs({
   options: {
     apply: { type: 'boolean', default: false },
     keep:  { type: 'string', multiple: true, default: [] },
+    // Also rewrite the history row of each --keep game to its kept score.
+    'sync-history': { type: 'boolean', default: false },
   },
 });
 const keep = new Set(args.keep);
@@ -61,7 +64,25 @@ for (const { date } of index) {
       const { timelineComplete, ...rest } = g; shard[i] = rest; dirty = true; // drop the flag only
       continue;
     }
-    if (keep.has(`${g.sport}:${date}`)) { kept++; console.log(`  =  ${label}: kept re-scored ${g.excitement} (was ${h.excitementScore})`); continue; }
+    if (keep.has(`${g.sport}:${date}`)) {
+      kept++;
+      console.log(`  =  ${label}: kept re-scored ${g.excitement} (was ${h.excitementScore})${args['sync-history'] ? ' — history row updated' : ''}`);
+      // The kept score is the correct one; bring the history row in line with it.
+      if (args['sync-history'] && args.apply) {
+        await redis.set(`history:${hDate}:${g.id}`, {
+          ...h,
+          excitementScore: g.excitement,
+          excitementDesc:  g.desc ?? h.excitementDesc,
+          momentumBonus:   g.momentumBonus ?? h.momentumBonus,
+          momentumSignals: g.momentumSignals ?? h.momentumSignals,
+          comebackBonus:   g.comebackBonus ?? h.comebackBonus,
+          comebackSignals: g.comebackSignals ?? h.comebackSignals,
+          isComeback:      g.isComeback ?? h.isComeback,
+          savedAt:         new Date().toISOString(),
+        }, { ex: CACHE_TTL.history });
+      }
+      continue;
+    }
 
     console.log(`  ←  ${label}: ${g.excitement} → ${h.excitementScore}`);
     const { timelineComplete, ...rest } = g;
