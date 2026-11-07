@@ -132,8 +132,13 @@ async function runGameCycle() {
       preFreezeGames([..._doneGames.values()]);
       // Recover pre-game record/rank for games that were still scheduled or in
       // progress when the process went down, so they can be frozen correctly
-      // when they finish rather than falling back to null.
-      seedPregameMeta((await getCache('games:upcoming')) || []);
+      // when they finish rather than falling back to null. Scheduled games come
+      // from games:upcoming; in-progress ones from the live entries in the day
+      // shards, which carry the pre-game record they were frozen with.
+      seedPregameMeta([
+        ...((await getCache('games:upcoming')) || []),
+        ...shards.flat().filter(g => g.live && !g.done),
+      ]);
       console.log(`[games] boot: recovered ${_doneGames.size} done games from ${index.length} day shards`);
       _initialized = true;
     }

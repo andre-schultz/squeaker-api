@@ -61,6 +61,9 @@ const _pregameMeta = new Map(); // gameId → { home: {record, rank}, away: {rec
 export function seedPregameMeta(upcoming) {
   for (const g of upcoming) {
     if (_pregameMeta.has(g.id)) continue;
+    // Nothing to recover — leave it unset so the next sighting can snapshot.
+    if (g.home?.record == null && g.away?.record == null &&
+        g.home?.rank == null && g.away?.rank == null) continue;
     _pregameMeta.set(g.id, {
       home: { record: g.home?.record ?? null, rank: g.home?.rank ?? null },
       away: { record: g.away?.record ?? null, rank: g.away?.rank ?? null },
@@ -246,9 +249,12 @@ async function parseEvent(ev, sportKey, cfg) {
   const away  = comps.find(c => c.homeAway === 'away');
   if (!home || !away) return null;
 
-  // Still in progress — refresh the pre-game snapshot. ESPN has not folded this
-  // game into either team's record yet, so what it reports now is still pre-game.
-  if (!done) snapshotPregame(ev.id, home, away);
+  // In progress — keep the snapshot taken while the game was scheduled. A
+  // team's record can't change during its own game, but ESPN sometimes folds
+  // the result in while the status still reads in-progress (e.g. "End of 4th"),
+  // and refreshing here then froze the POST-game record onto the final card.
+  // Only snapshot now if we never saw the game before kickoff.
+  if (!done && !_pregameMeta.has(ev.id)) snapshotPregame(ev.id, home, away);
 
   const homeScore = parseFloat(home.score) || 0;
   const awayScore = parseFloat(away.score) || 0;
