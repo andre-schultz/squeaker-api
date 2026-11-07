@@ -2,6 +2,9 @@
 // One-off repair: fill in the frozen pre-game record/rank for finished games
 // that lost it.
 //
+// Applied to production 2026-11-07 (see the restore/repair runs in that day's
+// incident); kept for reference and for re-use if it happens again.
+//
 // A done game's record/rank comes from a snapshot taken while the game was
 // still scheduled or live (see _pregameMeta in src/services/espn.js). A game the
 // server first sees already final — because its league wasn't being processed

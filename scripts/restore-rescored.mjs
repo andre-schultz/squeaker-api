@@ -2,6 +2,9 @@
 // One-off: undo the re-scoring done by the reverted timeline-backfill commit
 // (3e9ddbc, live on main briefly on 2026-11-07).
 //
+// Applied to production 2026-11-07 (see the restore/repair runs in that day's
+// incident); kept for reference and for re-use if it happens again.
+//
 // That commit re-scored done games whose polled score timeline didn't start at
 // 0-0 and marked every game it scored with a `timelineComplete` field. The
 // original score of each game is still in its history:{date}:{id} row, which is
