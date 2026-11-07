@@ -13,6 +13,8 @@ import {
 import { getOrFetchOdds } from './odds.js';
 import { recordAudit } from './audit.js';
 import { getStatsBonus } from './statsBonus.js';
+import { getCache } from './cache.js';
+import { backfillTimeline, timelineHasGap, pruneBackfill } from './backfill.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 
@@ -40,6 +42,19 @@ export function preFreezeGames(games) {
 export function pruneFrozenGame(id) {
   frozenGames.delete(id);
   _pregameMeta.delete(id);
+  pruneBackfill(id);
+}
+
+// A done game frozen before timeline backfill existed (no `timelineComplete`
+// flag) may have been scored from a partial timeline — e.g. it finished while
+// its league was down and was first seen as a final. Check its stored timeline
+// once; if it's missing the start of the game, it needs a full re-score.
+async function frozenNeedsRescore(mem, sportKey) {
+  if (mem.timelineComplete !== undefined) return false;
+  if (isSoccer(sportKey)) { mem.timelineComplete = false; return false; } // no backfill source
+  const timeline = await getCache(`timeline:${mem.id}`);
+  if (timeline && !timelineHasGap(timeline)) { mem.timelineComplete = true; return false; }
+  return true;
 }
 
 // ── Pre-game record / rank snapshots ──────────────────────────────────────────
@@ -223,10 +238,14 @@ async function parseEvent(ev, sportKey, cfg) {
   // ── Fast path: in-process done-game cache ────────────────────────────
   // Done games never change. If we've already processed this game in this
   // process (or warmup pre-loaded it), return immediately — 0 Redis, 0 ESPN.
+  // A frozen game whose timeline was partial gets one full re-score (below);
+  // `prior` keeps its frozen pre-game record/rank, which can't be re-derived.
+  let prior = null;
   if (done) {
     const mem = frozenGames.get(ev.id);
-    if (mem) return mem;
-    // Not frozen yet — fall through to full processing, freeze at end.
+    if (mem && !(await frozenNeedsRescore(mem, sportKey))) return mem;
+    prior = mem ?? null;
+    // Not frozen yet (or needs a re-score) — full processing, freeze at end.
   }
 
   const comps = co.competitors || [];
@@ -276,12 +295,17 @@ async function parseEvent(ev, sportKey, cfg) {
   //                              / pre-game); drives upset + action signals
   //  • getOrFetchOdds          → frozen pre-game line (display + upset fallback)
   //  • getStatsBonus           → stats-activity bonus written by the stats cycle
-  const [timeline, wpTimeline, odds, statsBonusRecord] = await Promise.all([
+  let [timeline, wpTimeline, odds, statsBonusRecord] = await Promise.all([
     recordSnapshot(partialGame),
     fetchAndStoreWPTimeline(partialGame, cfg.espnSport, cfg.espnLeague),
     getOrFetchOdds(ev.id, cfg.espnSport, cfg.espnLeague),
     getStatsBonus(ev.id),
   ]);
+
+  // Polled timeline missing the start of the game (we weren't watching when it
+  // began) → rebuild it from ESPN play-by-play so momentum and comeback see the
+  // whole game. No-op once the timeline opens at 0-0.
+  timeline = await backfillTimeline(partialGame, timeline, cfg.espnSport, cfg.espnLeague, ev.date);
 
   // Analyze momentum from full scoring timeline. Basketball scoring runs are
   // pre-computed from play-by-play in the stats cycle (stored on the stats-bonus
@@ -360,8 +384,8 @@ async function parseEvent(ev, sportKey, cfg) {
     ...baseTeam(T),
     score,
     winner: !!winner,
-    record: pre?.[side]?.record ?? null,
-    rank:   pre?.[side]?.rank   ?? null,
+    record: pre?.[side]?.record ?? prior?.[side]?.record ?? null,
+    rank:   pre?.[side]?.rank   ?? prior?.[side]?.rank   ?? null,
   });
 
   const game = {
@@ -391,6 +415,7 @@ async function parseEvent(ev, sportKey, cfg) {
     date:            ev.date,
     odds,                     // frozen pre-game line for display
     broadcasts:      (co.broadcasts || []).map(b => ({ market: b.market, names: b.names })),
+    timelineComplete: !timelineHasGap(timeline), // false → momentum/comeback saw only part of the game
     currentLiveActionBuzz,    // 0-100, computed from full WP history; retains last value after game ends
     links:           { espn: espnGamecastUrl(sportKey, ev.id) }, // server-built "cast ↗" link
   };
@@ -434,7 +459,7 @@ async function parseEvent(ev, sportKey, cfg) {
   // survives future cycles without any ESPN or Redis work.
   if (done) {
     frozenGames.set(ev.id, game);
-    console.log(`[frozen] ${game.away.abbr} @ ${game.home.abbr} (${game.sport}) — game frozen`);
+    console.log(`[frozen] ${game.away.abbr} @ ${game.home.abbr} (${game.sport}) — game ${prior ? 're-scored' : 'frozen'}`);
   }
 
   return game;

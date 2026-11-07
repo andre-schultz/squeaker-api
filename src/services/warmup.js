@@ -82,11 +82,11 @@ let   _indexSig  = null;      // signature of the last-written games:index
 let _lastAllGames = [];
 
 // A day's shard is identified by which games it holds and what state they're
-// in. Live games change excitement every cycle, so their score is part of the
-// signature; done games are frozen, so id+doneAt is enough to spot an addition.
+// in. Live games change excitement every cycle; done games are normally frozen
+// but can be re-scored once (timeline backfill), so excitement is in both.
 function shardSignature(games) {
   return games
-    .map(g => `${g.id}:${g.live ? `L${g.excitement}` : `D${g.doneAt ?? ''}`}`)
+    .map(g => `${g.id}:${g.live ? 'L' : `D${g.doneAt ?? ''}:`}${g.excitement}`)
     .sort()
     .join('|');
 }
@@ -145,9 +145,14 @@ async function runGameCycle() {
 
     // ── Update _doneGames with any newly-finished games ───────────────────
     for (const game of freshGames) {
-      if (game.done && !_doneGames.has(game.id)) {
+      if (!game.done) continue;
+      const known = _doneGames.get(game.id);
+      if (!known) {
         // First time we see this game as done — stamp doneAt and remember it.
         _doneGames.set(game.id, { ...game, doneAt: now });
+      } else if (known.excitement !== game.excitement || known.timelineComplete !== game.timelineComplete) {
+        // Re-scored (partial timeline backfilled) — replace, keep original doneAt.
+        _doneGames.set(game.id, { ...game, doneAt: known.doneAt ?? now });
       }
     }
 
