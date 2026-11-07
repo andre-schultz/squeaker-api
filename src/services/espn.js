@@ -77,16 +77,22 @@ function snapshotPregame(id, home, away) {
 
 // ── Out-of-season league suppression ──────────────────────────────────────────
 // A league that returns zero games — live, done, OR upcoming — across every
-// fetched date is almost certainly out of season. We mark it dormant for the
-// remainder of the current day (ET) and stop querying ESPN for it, then re-check
-// on the next day so it automatically comes back online when its season starts.
+// fetched date is almost certainly out of season, so we stop querying ESPN for
+// it for a while and re-check later; it comes back on its own when play resumes.
 //
-// Only a CONFIRMED-empty fetch marks dormancy: at least one date must have
-// responded OK. A league whose requests all errored is left active so a
-// transient ESPN outage can't suppress a whole league for the rest of the day.
-// The map is keyed by league and holds the ET date it's dormant FOR, so once the
-// day rolls over the stale entry no longer matches and the league is queried again.
-const _dormantForDate = new Map(); // leagueKey → ET date string ('YYYY-MM-DD')
+// Guarded against false positives, because a dormant league disappears from the
+// app entirely:
+//  • Only a CONFIRMED-empty pass counts: at least one date must have responded
+//    OK and parsed cleanly. A league whose requests all errored stays active.
+//  • It takes DORMANT_AFTER consecutive confirmed-empty passes. ESPN sometimes
+//    serves a 200 with an empty scoreboard for a moment; one such response used
+//    to suppress the league until midnight ET (CFB, 2026-11-07).
+//  • Dormancy lasts DORMANT_RECHECK_MS, not the rest of the day, so even a wrong
+//    call heals within the hour.
+const DORMANT_AFTER      = 3;               // consecutive empty passes (~9 min active hours)
+const DORMANT_RECHECK_MS = 60 * 60 * 1000;  // re-query a dormant league hourly
+const _emptyStreak  = new Map(); // leagueKey → consecutive confirmed-empty passes
+const _dormantUntil = new Map(); // leagueKey → epoch ms when it's queried again
 
 // ET calendar date, matching warmup.js's isOffHours() timezone basis. en-CA
 // formats as YYYY-MM-DD so string equality is a clean same-day check.
@@ -99,29 +105,35 @@ function etDateString() {
 // and upcoming is sorted by start time asc.
 export async function fetchAllEvents() {
   const dates = getAllDateStrings();
-  const today = etDateString();
+  const now   = Date.now();
+  const isDormant = (key) => (_dormantUntil.get(key) ?? 0) > now;
 
-  // Skip leagues already confirmed empty earlier today; query everything else.
-  const active = Object.entries(SPORTS).filter(([key]) => _dormantForDate.get(key) !== today);
+  // Skip leagues currently dormant; query everything else.
+  const active = Object.entries(SPORTS).filter(([key]) => !isDormant(key));
   const results = await Promise.all(
     active.map(([key, cfg]) => fetchSport(key, cfg, dates))
   );
 
-  // Update dormancy from this pass: confirmed-empty → dormant for today;
-  // any games found → clear (back in season). Errored-and-empty → leave as-is.
+  // Update dormancy from this pass: any games → clear (in season); confirmed
+  // empty → extend the streak, going dormant once it reaches DORMANT_AFTER.
+  // Errored-and-empty → leave as-is.
   active.forEach(([key], i) => {
     const r = results[i];
     const total = r.games.length + r.upcoming.length;
     if (total > 0) {
-      _dormantForDate.delete(key);
+      _emptyStreak.delete(key);
+      _dormantUntil.delete(key);
     } else if (r.ok) {
-      _dormantForDate.set(key, today);
+      const streak = (_emptyStreak.get(key) ?? 0) + 1;
+      _emptyStreak.set(key, streak);
+      if (streak >= DORMANT_AFTER) _dormantUntil.set(key, now + DORMANT_RECHECK_MS);
+      else console.log(`[espn] ${key}: empty pass ${streak}/${DORMANT_AFTER} before dormancy`);
     }
   });
 
-  const dormant = Object.keys(SPORTS).filter(key => _dormantForDate.get(key) === today);
+  const dormant = Object.keys(SPORTS).filter(isDormant);
   if (dormant.length) {
-    console.log(`[espn] ${active.length} leagues queried, ${dormant.length} dormant today: ${dormant.join(', ')}`);
+    console.log(`[espn] ${active.length} leagues queried, ${dormant.length} dormant: ${dormant.join(', ')}`);
   }
 
   const seenGames    = new Set();
