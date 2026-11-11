@@ -25,7 +25,7 @@ const byName   = (a, b) => a.n.localeCompare(b.n);
 // per conference. Cached as a single object: { conferences, teamsByConf, all }.
 async function getCollegeData(key) {
   const cfg = SPORTS[key];
-  const cacheKey = `college:${key}`;
+  const cacheKey = `college:v2:${key}`;
   const cached = await getCache(cacheKey);
   if (cached) return cached;
 
@@ -40,10 +40,12 @@ async function getCollegeData(key) {
     const teamsByConf = {};
     const all         = [];
     for (const c of data.children || []) {
-      const teams = (c.standings?.entries || []).map(e => team(e.team)).filter(valid).sort(byName);
+      // Some conferences (Sun Belt FB) nest their teams under division children.
+      const entries = c.standings?.entries || (c.children || []).flatMap(d => d.standings?.entries || []);
+      const teams = entries.map(e => team(e.team)).filter(valid).sort(byName);
       if (!teams.length) continue;
       const id = String(c.id);
-      conferences.push({ id, name: c.name || c.shortName });
+      conferences.push({ id, name: c.name || c.shortName, short: c.shortName || c.name });
       teamsByConf[id] = teams;
       all.push(...teams);
     }
@@ -57,7 +59,24 @@ async function getCollegeData(key) {
   }
 }
 
-// Conferences for a league — [{ id, name }]. Empty for non-college leagues.
+// abbr → conference id for a college league, memoized in-process so the games
+// routes can tag every response without a Redis read per request.
+const CONF_INDEX_TTL_MS = 6 * 3600 * 1000;
+const _confIndex = new Map(); // key → { at, map }
+
+export async function getConferenceIndex(key) {
+  const hit = _confIndex.get(key);
+  if (hit && Date.now() - hit.at < CONF_INDEX_TTL_MS) return hit.map;
+  const { teamsByConf } = await getCollegeData(key);
+  const map = new Map();
+  for (const [id, teams] of Object.entries(teamsByConf)) {
+    for (const t of teams) if (t.abbr) map.set(t.abbr, id);
+  }
+  if (map.size) _confIndex.set(key, { at: Date.now(), map });
+  return map;
+}
+
+// Conferences for a league — [{ id, name, short }]. Empty for non-college leagues.
 export async function getConferences(key) {
   const cfg = SPORTS[key];
   if (!cfg) return null;

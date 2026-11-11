@@ -3,7 +3,8 @@ import { fetchAllGames } from '../services/espn.js';
 import { getCache } from '../services/cache.js';
 import { getStats, getStatsTimeline } from '../services/stats.js';
 import { getApproxStats } from '../services/approxStats.js';
-import { espnGamecastUrl } from '../config.js';
+import { getConferenceIndex } from '../services/teams.js';
+import { SPORTS, espnGamecastUrl } from '../config.js';
 
 const router = express.Router();
 
@@ -15,6 +16,24 @@ function withLinks(games) {
   return games.map(g =>
     g && !g.links ? { ...g, links: { espn: espnGamecastUrl(g.sport, g.id) } } : g
   );
+}
+
+// Tag each side of a college game with its `conferenceId`, so clients can
+// filter by conference. Done at response time so frozen/cached games get it too.
+async function withConferences(games) {
+  if (!Array.isArray(games)) return games;
+  const keys = [...new Set(games.map(g => g?.sport).filter(k => SPORTS[k]?.conference))];
+  if (!keys.length) return games;
+  const indexes = new Map(await Promise.all(keys.map(async k => [k, await getConferenceIndex(k)])));
+  return games.map(g => {
+    const idx = indexes.get(g?.sport);
+    if (!idx) return g;
+    return {
+      ...g,
+      home: { ...g.home, conferenceId: idx.get(g.home?.abbr) ?? null },
+      away: { ...g.away, conferenceId: idx.get(g.away?.abbr) ?? null },
+    };
+  });
 }
 
 // In-flight fallback fetch, shared across concurrent cache-miss requests so a
@@ -51,7 +70,7 @@ router.get('/', async (req, res) => {
       // An empty/missing shard is a legitimate answer (a day with no games, or
       // one aged out of the window), so return [] rather than falling back to
       // a live ESPN fetch that could not produce that day anyway.
-      return res.json(withLinks((await getCache(`games:day:${date}`)) || []));
+      return res.json(await withConferences(withLinks((await getCache(`games:day:${date}`)) || [])));
     }
 
     const cached = await getCache('games:all');
@@ -78,7 +97,7 @@ router.get('/', async (req, res) => {
 router.get('/upcoming', async (req, res) => {
   try {
     const cached = await getCache('games:upcoming');
-    res.json(withLinks(cached || []));
+    res.json(await withConferences(withLinks(cached || [])));
   } catch (e) {
     console.error('GET /api/games/upcoming error:', e.message);
     res.status(500).json({ error: 'Failed to fetch upcoming games' });
